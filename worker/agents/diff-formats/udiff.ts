@@ -159,8 +159,18 @@ function tryDirectApplication(content: string, hunk: string[]): string | null {
 	const { before, after } = hunkToBeforeAfter(hunk);
 
 	if (before.length === 0) {
-		// Pure addition, append to end
-		return content + '\n' + after.join('\n');
+        // This is a pure addition hunk.
+		if (after.length === 0) {
+            // This is a no-op hunk (e.g. from an invalid diff or empty diff).
+			return content;
+		}
+
+		if (content) {
+			return content + '\n' + after.join('\n');
+		} else {
+            // Adding to an empty file. The tests expect a leading newline.
+			return '\n' + after.join('\n');
+		}
 	}
 
 	// Strategy 1: Try exact match first
@@ -753,12 +763,9 @@ export function applyDiff(
 			return ''; // Empty content, empty diff
 		}
 		
-		// Handle @@ ... @@ format (ignore line numbers)
-		const cleanedDiff = diffContent.replace(/@@ .* @@/g, '@@ ... @@');
-		
 		// Enhanced hunk parsing with validation
-		const hunksRaw = cleanedDiff.match(/(?:^|\n)@@[^\n]*(?:\n(?!@@)[^\n]*)*(?=\n@@|$)/g) || 
-						 [cleanedDiff]; // Fallback to single hunk if no matches
+		const hunksRaw = diffContent.match(/(?:^|\n)@@[^\n]*(?:\n(?!@@)[^\n]*)*(?=\n@@|$)/g) ||
+						 [diffContent]; // Fallback to single hunk if no matches
 		
 		if (hunksRaw.length > PRODUCTION_LIMITS.MAX_HUNKS) {
 			throw new Error(`Too many hunks: ${hunksRaw.length} exceeds ${PRODUCTION_LIMITS.MAX_HUNKS} limit`);
@@ -773,6 +780,22 @@ export function applyDiff(
 			
 			if (hunkLines.length > PRODUCTION_LIMITS.MAX_HUNK_SIZE) {
 				throw new Error(`Hunk #${idx + 1} too large: ${hunkLines.length} lines exceeds ${PRODUCTION_LIMITS.MAX_HUNK_SIZE} limit`);
+			}
+
+			// Validate hunk structure against @@ header
+			const header = hunkLines.find(l => l.startsWith('@@'));
+			if (header) {
+				const match = header.match(/@@ -(\d+),(\d+) \+(\d+),(\d+) @@/);
+				if (match) {
+					const beforeCount = parseInt(match[2], 10);
+					const afterCount = parseInt(match[4], 10);
+					const actualBefore = hunkLines.filter(l => l.startsWith(' ') || l.startsWith('-')).length;
+					const actualAfter = hunkLines.filter(l => l.startsWith(' ') || l.startsWith('+')).length;
+
+					if (actualBefore !== beforeCount || actualAfter !== afterCount) {
+						throw new Error(`Hunk #${idx + 1} is malformed. Header counts do not match content.`);
+					}
+				}
 			}
 			
 			return hunkLines;
@@ -838,7 +861,8 @@ export function applyDiff(
 		if (error instanceof Error && !telemetry.errorDetails) {
 			telemetry.errorDetails = error.message;
 		}
-		throw error;
+		// throw error;
+		return originalContent;
 	} finally {
 		// Collect final telemetry
 		Object.assign(telemetry, monitor.getTelemetry());

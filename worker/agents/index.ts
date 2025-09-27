@@ -1,6 +1,4 @@
-
 import { SmartCodeGeneratorAgent } from './core/smartGeneratorAgent';
-import { getAgentByName } from 'agents';
 import { CodeGenState } from './core/state';
 import { generateId } from '../utils/idGenerator';
 import { StructuredLogger } from '../logger';
@@ -10,65 +8,48 @@ import { selectTemplate } from './planning/templateSelector';
 import { getSandboxService } from '../services/sandbox/factory';
 import { TemplateDetails } from '../services/sandbox/sandboxTypes';
 import { TemplateSelection } from './schemas';
+import { agentManager } from './AgentManager';
+import { AgentInitArgs } from './core/types';
 
-export async function getAgentStub(env: Env, agentId: string, searchInOtherJurisdictions: boolean = false, logger: StructuredLogger) : Promise<DurableObjectStub<SmartCodeGeneratorAgent>> {
-    if (searchInOtherJurisdictions) {
-        // Try multiple jurisdictions until we find the agent
-        const jurisdictions = [undefined, 'eu' as DurableObjectJurisdiction];
-        for (const jurisdiction of jurisdictions) {
-            try {
-                logger.info(`Agent ${agentId} retreiving from jurisdiction ${jurisdiction}`);
-                const stub = await getAgentByName<Env, SmartCodeGeneratorAgent>(env.CodeGenObject, agentId, {
-                    locationHint: 'enam',
-                    jurisdiction: jurisdiction,
-                });
-                const isInitialized = await stub.isInitialized()
-                if (isInitialized) {
-                    logger.info(`Agent ${agentId} found in jurisdiction ${jurisdiction}`);
-                    return stub
-                }
-            } catch (error) {
-                logger.info(`Agent ${agentId} not found in jurisdiction ${jurisdiction}`);
-            }
-        }
-        // If all jurisdictions fail, throw an error
-        // throw new Error(`Agent ${agentId} not found in any jurisdiction`);
-    }
-    logger.info(`Agent ${agentId} retrieved directly`);
-    return getAgentByName<Env, SmartCodeGeneratorAgent>(env.CodeGenObject, agentId, {
-        locationHint: 'enam'
-    });
+export async function getAgent(agentId: string): Promise<SmartCodeGeneratorAgent | undefined> {
+    return agentManager.getAgent(agentId);
 }
 
-export async function getAgentState(env: Env, agentId: string, searchInOtherJurisdictions: boolean = false, logger: StructuredLogger) : Promise<CodeGenState> {
-    const agentInstance = await getAgentStub(env, agentId, searchInOtherJurisdictions, logger);
-    return agentInstance.getFullState() as CodeGenState;
-}
+export async function createAgent(
+    env: Env, // Still need env for now for things like selectTemplate
+    inferenceContext: InferenceContext,
+    query: string,
+    logger: StructuredLogger,
+): Promise<SmartCodeGeneratorAgent> {
+    const { sandboxSessionId, templateDetails, selection } = await getTemplateForQuery(env, inferenceContext, query, logger);
 
-export async function cloneAgent(env: Env, agentId: string, logger: StructuredLogger) : Promise<{newAgentId: string, newAgent: DurableObjectStub<SmartCodeGeneratorAgent>}> {
-    const agentInstance = await getAgentStub(env, agentId, true, logger);
-    if (!agentInstance || !await agentInstance.isInitialized()) {
-        throw new Error(`Agent ${agentId} not found`);
-    }
-    const newAgentId = generateId();
-
-    const newAgent = await getAgentStub(env, newAgentId, false, logger);
-    const originalState = await agentInstance.getFullState() as CodeGenState;
-    const newState = {
-        ...originalState,
-        sessionId: newAgentId,
-        sandboxInstanceId: undefined,
-        pendingUserInputs: [],
-        currentDevState: 0,
-        generationPromise: undefined,
-        shouldBeGenerating: false,
-        // latestScreenshot: undefined,
-        clientReportedErrors: [],
+    const initArgs: AgentInitArgs = {
+        query,
+        hostname: 'localhost', // This needs to be configured
+        inferenceContext,
+        templateInfo: {
+            templateDetails,
+            selection,
+        },
+        sandboxSessionId,
+        onBlueprintChunk: () => {}, // Placeholder for streaming
     };
 
-    await newAgent.setState(newState);
-    return {newAgentId, newAgent};
+    return agentManager.createAgent(initArgs);
 }
+
+export async function getAgentState(agentId: string): Promise<CodeGenState | undefined> {
+    const agentInstance = await getAgent(agentId);
+    if (agentInstance) {
+        return agentInstance.getFullState();
+    }
+    return undefined;
+}
+
+// Cloning is complex and will be addressed later.
+// export async function cloneAgent(agentId: string, logger: StructuredLogger) : Promise<{newAgentId: string, newAgent: SmartCodeGeneratorAgent}> {
+//     // ... implementation ...
+// }
 
 export async function getTemplateForQuery(
     env: Env,

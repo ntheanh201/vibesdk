@@ -107,7 +107,7 @@ export const AppListContainer: React.FC<AppListContainerProps> = ({
     return (
       <div className="flex items-center py-20">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-text-tertiary" />
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
           <p className="text-neutral-50">Loading apps...</p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export const AppListContainer: React.FC<AppListContainerProps> = ({
     
     return (
       <div className="text-center py-20">
-        <Code2 className="h-16 w-16 mx-auto mb-4 text-text-tertiary" />
+        <Code2 className="h-16 w-16 mx-auto mb-4 text-primary" />
         <h3 className="text-xl font-semibold mb-2 text-text-secondary">
           {emptyStateContent.title}
         </h3>
@@ -176,7 +176,7 @@ export const AppListContainer: React.FC<AppListContainerProps> = ({
 
       {loadingMore && (
         <div className="flex justify-center mt-8">
-          <div className="flex items-center gap-2 text-text-tertiary">
+          <div className="flex items-center gap-2 text-primary">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span className="text-sm">Loading more apps...</span>
           </div>

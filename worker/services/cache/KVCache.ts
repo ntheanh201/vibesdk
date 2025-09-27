@@ -1,10 +1,10 @@
-export interface KVCacheOptions {
-    ttl?: number; // seconds
-    prefix?: string;
+interface CacheEntry<T> {
+    value: T;
+    expiresAt: number | null;
 }
 
-export class KVCache {
-    constructor(private kv: KVNamespace) {}
+export class InMemoryCache {
+    private store = new Map<string, CacheEntry<any>>();
 
     private generateKey(prefix: string, key: string): string {
         return `cache-${prefix}:${key}`;
@@ -12,31 +12,38 @@ export class KVCache {
 
     async get<T>(prefix: string, key: string): Promise<T | null> {
         const fullKey = this.generateKey(prefix, key);
-        const value = await this.kv.get(fullKey, 'json');
-        return value as T | null;
+        const entry = this.store.get(fullKey);
+
+        if (!entry) {
+            return null;
+        }
+
+        if (entry.expiresAt && entry.expiresAt < Date.now()) {
+            this.store.delete(fullKey);
+            return null;
+        }
+
+        return entry.value as T | null;
     }
 
     async set<T>(prefix: string, key: string, value: T, ttl?: number): Promise<void> {
         const fullKey = this.generateKey(prefix, key);
-        const options: KVNamespacePutOptions = {};
-        if (ttl) {
-            options.expirationTtl = ttl;
-        }
-        await this.kv.put(fullKey, JSON.stringify(value), options);
+        const expiresAt = ttl ? Date.now() + ttl * 1000 : null;
+        this.store.set(fullKey, { value, expiresAt });
     }
 
     async delete(prefix: string, key: string): Promise<void> {
         const fullKey = this.generateKey(prefix, key);
-        await this.kv.delete(fullKey);
+        this.store.delete(fullKey);
     }
 
     async deleteByPrefix(prefix: string): Promise<void> {
-        let cursor: string | undefined = undefined;
-        do {
-            const list: KVNamespaceListResult<unknown> = await this.kv.list({ prefix: `cache-${prefix}:`, cursor });
-            await Promise.all(list.keys.map((key: KVNamespaceListKey<unknown>) => this.kv.delete(key.name)));
-            cursor = list.list_complete ? undefined : list.cursor;
-        } while (cursor);
+        const searchPrefix = `cache-${prefix}:`;
+        for (const key of this.store.keys()) {
+            if (key.startsWith(searchPrefix)) {
+                this.store.delete(key);
+            }
+        }
     }
 
     async invalidate(patterns: string[]): Promise<void> {
@@ -44,7 +51,6 @@ export class KVCache {
     }
 }
 
-export function createKVCache(env: Env): KVCache {
-    const kv = env.VibecoderStore;
-    return new KVCache(kv);
+export function createInMemoryCache(): InMemoryCache {
+    return new InMemoryCache();
 }

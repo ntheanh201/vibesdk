@@ -1,4 +1,6 @@
 import { Agent, Connection } from 'agents';
+import * as fs from 'fs';
+import * as path from 'path';
 import { 
     AgentActionType, 
     Blueprint, 
@@ -141,67 +143,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return bytes;
     }
 
-    private async uploadScreenshotToCloudflareImages(base64: string, filename: string): Promise<string> {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/images/v1`;
+    private async uploadScreenshotToLocal(base64: string, filename: string): Promise<string> {
+        const directory = path.join(process.cwd(), 'data', 'uploads', 'screenshots');
+        if (!fs.existsSync(directory)) {
+            fs.mkdirSync(directory, { recursive: true });
+        }
+        const filePath = path.join(directory, filename);
         const bytes = this.base64ToUint8Array(base64);
-        const blob = new Blob([bytes], { type: 'image/png' });
-        const form = new FormData();
-        form.append('file', blob, filename);
+        fs.writeFileSync(filePath, bytes);
 
-        // Type guard for Images binding
-        type ImagesBinding = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-        const maybeImages = (this.env as unknown as { [key: string]: unknown })['IMAGES'];
-        const imagesBinding: ImagesBinding | null = (
-            typeof maybeImages === 'object' && maybeImages !== null &&
-            'fetch' in (maybeImages as Record<string, unknown>) && 
-            typeof (maybeImages as { fetch?: unknown }).fetch === 'function'
-        ) ? (maybeImages as ImagesBinding) : null;
-
-        let resp: Response;
-        if (imagesBinding) {
-            // Use Images service binding when available (no explicit token needed)
-            resp = await imagesBinding.fetch(url, { method: 'POST', body: form });
-        } else if (this.env.CLOUDFLARE_API_TOKEN) {
-            // Fallback to direct API with token
-            resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}` },
-                body: form,
-            });
-        } else {
-            throw new Error('Cloudflare Images not available: missing IMAGES binding and CLOUDFLARE_API_TOKEN');
-        }
-
-        const json = await resp.json() as {
-            success: boolean;
-            result?: { id: string; variants?: string[] };
-            errors?: Array<{ message?: string }>;
-        };
-
-        if (!resp.ok || !json.success || !json.result) {
-            const errMsg = json.errors?.map(e => e.message).join('; ') || `status ${resp.status}`;
-            throw new Error(`Cloudflare Images upload failed: ${errMsg}`);
-        }
-
-        const variants = json.result.variants || [];
-        if (variants.length > 0) {
-            // Prefer first variant URL
-            return variants[0];
-        }
-        throw new Error('Cloudflare Images upload succeeded without variants');
-    }
-
-    private async uploadScreenshotToR2(base64: string, key: string): Promise<string> {
-        const bytes = this.base64ToUint8Array(base64);
-        await this.env.TEMPLATES_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } });
-
-        // Build a public URL served via Worker route
-        const fileName = key.split('/').pop() as string;
-        const protocol = getProtocolForHost(this.state.hostname);
-        const base = this.state.hostname ? `${protocol}://${this.state.hostname}` : '';
-        const agentId = this.state.inferenceContext.agentId;
-        const url = `${base}/api/screenshots/${encodeURIComponent(agentId)}/${encodeURIComponent(fileName)}`;
-        return url;
+        // Return a public URL path that can be served by a static file server
+        const publicUrl = `/uploads/screenshots/${filename}`;
+        return publicUrl;
     }
 
     initialState: CodeGenState = {
@@ -2377,159 +2330,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         url: string, 
         viewport: { width: number; height: number } = { width: 1280, height: 720 }
     ): Promise<string> {
-        if (!url) {
-            const error = 'URL is required for screenshot capture';
-            this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                error,
-                url,
-                viewport
-            });
-            throw new Error(error);
-        }
-
-        this.logger().info('Capturing screenshot via REST API', { url, viewport });
-        
-        // Notify start of screenshot capture
-        this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_STARTED, {
-            message: `Capturing screenshot of ${url}`,
+        this.logger().warn('Screenshot capture is disabled as it relies on the Cloudflare Browser Rendering API.');
+        this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
+            error: 'Screenshot capture is disabled in this version of the application.',
             url,
             viewport
         });
-        
-        try {
-            // Use Cloudflare Browser Rendering REST API
-            const apiUrl = `https://api.cloudflare.com/client/v4/accounts/${this.env.CLOUDFLARE_ACCOUNT_ID}/browser-rendering/snapshot`;
-            
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.env.CLOUDFLARE_API_TOKEN}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    url: url,
-                    viewport: viewport,
-                    gotoOptions: {
-                        waitUntil: 'networkidle0',
-                        timeout: 30000
-                    },
-                    screenshotOptions: {
-                        fullPage: false,
-                        type: 'png'
-                    }
-                }),
-            });
-            
-            if (!response.ok) {
-                const errorText = await response.text();
-                const error = `Browser Rendering API failed: ${response.status} - ${errorText}`;
-                this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                    error,
-                    url,
-                    viewport,
-                    statusCode: response.status,
-                    statusText: response.statusText
-                });
-                throw new Error(error);
-            }
-            
-            const result = await response.json() as {
-                success: boolean;
-                result: {
-                    screenshot: string; // base64 encoded
-                    content: string;    // HTML content
-                };
-            };
-            
-            if (!result.success || !result.result.screenshot) {
-                const error = 'Browser Rendering API succeeded but no screenshot returned';
-                this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                    error,
-                    url,
-                    viewport,
-                    apiResponse: result
-                });
-                throw new Error(error);
-            }
-            
-            // Get base64 screenshot data
-            const base64Screenshot = result.result.screenshot;
-
-            // Prefer Cloudflare Images → then R2 → fallback to data URL
-            const fileStamp = Date.now();
-            const fileBase = `${this.getAgentId()}-${fileStamp}`;
-            let publicUrl: string | null = null;
-
-            // 1) Try Cloudflare Images (REST API)
-            try {
-                publicUrl = await this.uploadScreenshotToCloudflareImages(base64Screenshot, `${fileBase}.png`);
-            } catch (imgErr) {
-                this.logger().warn('Cloudflare Images upload failed, will try R2 fallback', { error: imgErr instanceof Error ? imgErr.message : String(imgErr) });
-            }
-
-            // 2) Try R2 (serve via Worker route) if Images failed
-            if (!publicUrl) {
-                try {
-                    const r2Key = `screenshots/${this.getAgentId()}/${fileBase}.png`;
-                    publicUrl = await this.uploadScreenshotToR2(base64Screenshot, r2Key);
-                } catch (r2Err) {
-                    this.logger().warn('R2 upload fallback failed, will store as data URL', { error: r2Err instanceof Error ? r2Err.message : String(r2Err) });
-                }
-            }
-
-            // 3) Fallback: store data URL directly in DB
-            if (!publicUrl) {
-                publicUrl = `data:image/png;base64,${base64Screenshot}`;
-            }
-
-            // Persist in database
-            try {
-                const appService = new AppService(this.env);
-                await appService.updateAppScreenshot(this.getAgentId(), publicUrl);
-            } catch (dbError) {
-                const error = `Database update failed: ${dbError instanceof Error ? dbError.message : 'Unknown database error'}`;
-                this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                    error,
-                    url,
-                    viewport,
-                    screenshotCaptured: true,
-                    databaseError: true
-                });
-                throw new Error(error);
-            }
-
-            this.logger().info('Screenshot captured and stored successfully', { 
-                url, 
-                storage: publicUrl.startsWith('data:') ? 'database' : (publicUrl.includes('/api/screenshots/') ? 'r2' : 'images'),
-                length: base64Screenshot.length
-            });
-
-            // Notify successful screenshot capture
-            this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_SUCCESS, {
-                message: `Successfully captured screenshot of ${url}`,
-                url,
-                viewport,
-                screenshotSize: base64Screenshot.length,
-                timestamp: new Date().toISOString()
-            });
-
-            return publicUrl;
-            
-        } catch (error) {
-            this.logger().error('Failed to capture screenshot via REST API:', error);
-            
-            // Only broadcast if error wasn't already broadcast above
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            if (!errorMessage.includes('Browser Rendering API') && !errorMessage.includes('Database update failed')) {
-                this.broadcast(WebSocketMessageResponses.SCREENSHOT_CAPTURE_ERROR, {
-                    error: errorMessage,
-                    url,
-                    viewport
-                });
-            }
-            
-            throw new Error(`Screenshot capture failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
+        return Promise.resolve('');
     }
 
 

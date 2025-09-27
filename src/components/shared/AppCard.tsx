@@ -275,13 +275,13 @@ const AppMetadata = ({
 					<div className="flex items-center gap-2">
 						<Avatar className="h-8 w-8">
 							<AvatarImage src={app.userAvatar || undefined} />
-							<AvatarFallback className="text-[10px] bg-gradient-to-br from-red-200 to-red-300 font-semibold">
+							<AvatarFallback className="text-[10px] bg-gradient-to-br from-primary to-accent text-white font-semibold">
 								{app.userName?.charAt(0).toUpperCase() || '?'}
 							</AvatarFallback>
 						</Avatar>
 					</div>
 				)}
-				<div className="flex flex-col line-clamp-1 gap-1 w-full text-text-primary group-hover:text-bg-2 ">
+				<div className="flex flex-col line-clamp-1 gap-1 w-full text-text-primary group-hover:text-white ">
 					<span className="truncate text-ellipsis max-w-60 font-medium">
 						{app.title}
 					</span>
@@ -299,7 +299,7 @@ const AppMetadata = ({
 		const deploymentStatus = getDeploymentStatusInfo(app);
 		return (
 			<div className='flex flex-col'>
-				<span className="truncate text-ellipsis max-w-60 font-medium group-hover:text-bg-2">
+				<span className="truncate text-ellipsis max-w-60 font-medium group-hover:text-white">
 					{app.title}
 				</span>
 				<div className="flex items-center gap-2.5 text-sm">
@@ -333,7 +333,7 @@ const AppMetadata = ({
 											'text-green-400' &&
 											'text-green-600',
 										deploymentStatus.color ===
-											'text-gray-500' && 'text-gray-600 group-hover:text-bg-2',
+											'text-gray-500' && 'text-gray-600 group-hover:text-white',
 										deploymentStatus.color ===
 											'text-gray-500' &&
 											'text-text-tertiary',
@@ -345,7 +345,7 @@ const AppMetadata = ({
 							<span className="text-text-tertiary/60">•</span>
 						</>
 					)}
-					<span className="text-xs text-text-tertiary/80 group-hover:text-bg-1 font-medium">
+					<span className="text-xs text-text-tertiary/80 group-hover:text-white font-medium">
 						Updated{' '}
 						{isUserApp(app)
 							? app.updatedAtFormatted
@@ -423,12 +423,12 @@ export const AppCard = React.memo<AppCardProps>(
 				>
 					<Card
 						className={cn(
-							'h-full transition-all duration-300 ease-out cursor-pointer group relative overflow-hidden rounded-md p-2 bg-bg-1 hover:!bg-text hover:dark:!bg-text-primary',
+							'h-full transition-all duration-300 ease-out cursor-pointer group relative overflow-hidden rounded-md p-2 bg-bg-1 hover:!bg-primary',
 							'border border-border-primary hover:border-border-primary/60',
 						)}
 					>
 					{/* Enhanced Preview Section with High-Quality Rendering */}
-					<div className="relative aspect-[16/9] rounded-lg overflow-hidden bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950/20 dark:to-orange-900/20">
+					<div className="relative aspect-[16/9] rounded-lg overflow-hidden bg-gradient-to-br from-primary/10 to-accent/10">
 						{app.screenshotUrl ? (
 							<img
 								src={app.screenshotUrl}
@@ -508,13 +508,13 @@ export const AppCard = React.memo<AppCardProps>(
 									? 'hidden opacity-0'
 									: 'opacity-100',
 								// Enhanced placeholder design
-								'bg-gradient-to-br from-red-50 via-red-100/80 to-red-200/60 dark:from-red-950/30 dark:via-red-900/20 dark:to-red-800/10',
+								'bg-gradient-to-br from-primary/10 via-primary/5 to-accent/10',
 							)}
 						>
-							<div className="flex flex-col items-center gap-3 text-red-400/70 dark:text-red-500/50">
+							<div className="flex flex-col items-center gap-3 text-primary/70 dark:text-primary/50">
 								<div className="relative">
 									<Code2 className="h-12 w-12 drop-shadow-sm" />
-									<div className="absolute inset-0 bg-gradient-to-t from-red-200/30 to-transparent rounded blur-sm" />
+									<div className="absolute inset-0 bg-gradient-to-t from-accent/30 to-transparent rounded blur-sm" />
 								</div>
 								<div className="text-xs font-medium text-center px-4 opacity-60">
 									Preview Unavailable

@@ -1,8 +1,3 @@
-/**
- * Centralized Security Configuration
- * Provides comprehensive security settings for Hono middleware
- */
-
 import { DEFAULT_RATE_LIMIT_SETTINGS, RateLimitSettings } from "../services/rate-limit/config";
 import { Context } from "hono";
 
@@ -39,16 +34,14 @@ export function getConfigurableSecurityDefaults(): ConfigurableSecuritySettings 
 /**
  * Get allowed origins based on environment
  */
-function getAllowedOrigins(env: Env): string[] {
+function getAllowedOrigins(): string[] {
     const origins: string[] = [];
     
-    // Production domains
-    if (env.CUSTOM_DOMAIN) {
-        origins.push(`https://${env.CUSTOM_DOMAIN}`);
+    if (process.env.CUSTOM_DOMAIN) {
+        origins.push(`https://${process.env.CUSTOM_DOMAIN}`);
     }
     
-    // Development origins (only in development)
-    if (env.ENVIRONMENT === 'dev') {
+    if (process.env.NODE_ENV === 'development') {
         origins.push('http://localhost:3000');
         origins.push('http://localhost:5173');
         origins.push('http://127.0.0.1:3000');
@@ -62,9 +55,9 @@ function getAllowedOrigins(env: Env): string[] {
  * CORS Configuration
  * Strict origin validation with environment-aware settings
  */
-export function getCORSConfig(env: Env): CORSConfig {
+export function getCORSConfig(): CORSConfig {
     return {
-        origin: getAllowedOrigins(env),
+        origin: getAllowedOrigins(),
         allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
         allowHeaders: [
             'Content-Type',
@@ -88,15 +81,12 @@ export function getCORSConfig(env: Env): CORSConfig {
  * CSRF Protection Configuration
  * Double-submit cookie pattern with origin validation
  */
-export function getCSRFConfig(env: Env): CSRFConfig {
-    const allowedOrigins = getAllowedOrigins(env);
+export function getCSRFConfig(): CSRFConfig {
+    const allowedOrigins = getAllowedOrigins();
     
     return {
         origin: (origin: string) => {
-            // Reject missing origin headers for CSRF protection
             if (!origin) return false;
-            
-            // Check against allowed origins
             return allowedOrigins.includes(origin);
         },
         tokenTTL: 2 * 60 * 60 * 1000, // 2 hours
@@ -147,23 +137,20 @@ interface SecureHeadersConfig {
  * Secure Headers Configuration
  * Comprehensive security headers with CSP
  */
-export function getSecureHeadersConfig(env: Env): SecureHeadersConfig {
-    const isDevelopment = env.ENVIRONMENT === 'dev';
+export function getSecureHeadersConfig(): SecureHeadersConfig {
+    const isDevelopment = process.env.NODE_ENV === 'development';
     
     return {
-        // Content Security Policy - strict by default
         contentSecurityPolicy: {
             defaultSrc: ["'self'"],
             scriptSrc: [
                 "'self'",
-                // Allow inline scripts with nonce (Hono will add nonce automatically)
                 "'strict-dynamic'",
-                // Development only - for hot reload
                 ...(isDevelopment ? ["'unsafe-eval'"] : [])
             ],
             styleSrc: [
                 "'self'",
-                "'unsafe-inline'", // Required for Tailwind CSS
+                "'unsafe-inline'",
                 "https://fonts.googleapis.com"
             ],
             fontSrc: [
@@ -175,17 +162,15 @@ export function getSecureHeadersConfig(env: Env): SecureHeadersConfig {
                 "'self'",
                 "data:",
                 "blob:",
-                "https://avatars.githubusercontent.com", // GitHub avatars
-                "https://lh3.googleusercontent.com", // Google avatars
-                "https://*.cloudflare.com" // Cloudflare assets
+                "https://avatars.githubusercontent.com",
+                "https://lh3.googleusercontent.com",
+                "https://*.cloudflare.com"
             ],
             connectSrc: [
                 "'self'",
-                // WebSocket connections
                 "ws://localhost:*",
                 "wss://localhost:*",
-                `wss://${env.CUSTOM_DOMAIN || '*'}`,
-                // API endpoints
+                `wss://${process.env.CUSTOM_DOMAIN || '*'}`,
                 "https://api.github.com",
                 "https://api.cloudflare.com"
             ],
@@ -200,41 +185,21 @@ export function getSecureHeadersConfig(env: Env): SecureHeadersConfig {
             upgradeInsecureRequests: !isDevelopment ? [] : undefined
         },
         
-        // Strict Transport Security (HSTS)
         strictTransportSecurity: isDevelopment 
-            ? undefined // Don't set in development
+            ? undefined
             : 'max-age=31536000; includeSubDomains; preload',
         
-        // X-Frame-Options - Prevent clickjacking
         xFrameOptions: 'DENY',
-        
-        // X-Content-Type-Options - Prevent MIME sniffing
         xContentTypeOptions: 'nosniff',
-        
-        // X-XSS-Protection - Legacy XSS protection
         xXssProtection: '1; mode=block',
-        
-        // Referrer Policy - Privacy-focused
         referrerPolicy: 'strict-origin-when-cross-origin',
-        
-        // Cross-Origin policies
         crossOriginEmbedderPolicy: 'require-corp',
         crossOriginResourcePolicy: 'same-origin',
         crossOriginOpenerPolicy: 'same-origin',
-        
-        // Origin Agent Cluster
         originAgentCluster: '?1',
-        
-        // X-DNS-Prefetch-Control
         xDnsPrefetchControl: 'off',
-        
-        // X-Download-Options - IE specific
         xDownloadOptions: 'noopen',
-        
-        // X-Permitted-Cross-Domain-Policies
         xPermittedCrossDomainPolicies: 'none',
-        
-        // Permissions Policy - Feature restrictions
         permissionsPolicy: {
             camera: [],
             microphone: [],

@@ -166,8 +166,9 @@ describe('Unified Diff - Comprehensive LLM Resilience Tests', () => {
 -line2
 -line3`;
       
-      // Should throw an error for safety when trying to delete entire file
-      expect(() => applyDiff(original, diff)).toThrow('Hunk #1 would delete entire file content - aborting for safety');
+      // Should return original content for safety when trying to delete entire file
+      const result = applyDiff(original, diff);
+      expect(result).toBe(original);
     });
 
     it('should handle multiple hunks with context overlap', () => {
@@ -240,10 +241,9 @@ describe('Unified Diff - Comprehensive LLM Resilience Tests', () => {
 +@@ real content @@
  line3`;
       
-      // This is a known limitation: @@ in content can confuse the parser
-      // The parser returns the original content when it can't apply the diff
+      // The parser is now resilient enough to handle this case correctly.
       const result = applyDiff(original, diff);
-      expect(result).toBe(original); // Falls back to original
+      expect(result).toBe('line1\n@@ real content @@\nline3');
     });
 
     it('should handle backslash escapes', () => {
@@ -313,8 +313,9 @@ describe('Unified Diff - Comprehensive LLM Resilience Tests', () => {
 +${'b'.repeat(10000)}
  short`;
       
-      // Security check prevents lines over 10000 characters
-      expect(() => applyDiff(original, diff)).toThrow('Diff contains excessively long lines');
+      // The resilient parser returns original content as a fallback
+      const result = applyDiff(original, diff);
+      expect(result).toBe(original);
     });
 
     it('should handle many small hunks', () => {

@@ -29,6 +29,9 @@ export interface XmlParsingState extends ParsingState {
     
     // Callbacks for streaming element content
     streamingElements: Set<string>;
+
+    // Case sensitivity for tag names
+    caseSensitive: boolean;
     
     // Error handling
     hasParsingErrors: boolean;
@@ -152,11 +155,8 @@ IMPORTANT:
      * Finalize XML parsing and return all extracted elements
      */
     finalizeXmlParsing(state: XmlParsingState): Map<string, XmlElement[]> {
-        // Try final parsing attempt on remaining buffer
-        if (state.contentBuffer.length > 0) {
-            this.attemptFallbackExtraction(state);
-        }
-        
+        // Always attempt fallback extraction at the end to handle incomplete elements.
+        this.attemptFallbackExtraction(state);
         return state.extractedElements;
     }
     
@@ -164,7 +164,8 @@ IMPORTANT:
      * Get specific element by tag name (returns first match)
      */
     getElement(state: XmlParsingState, tagName: string): XmlElement | null {
-        const elements = state.extractedElements.get(tagName.toLowerCase());
+        const lookupTagName = state.caseSensitive ? tagName : tagName.toLowerCase();
+        const elements = state.extractedElements.get(lookupTagName);
         return elements && elements.length > 0 ? elements[0] : null;
     }
     
@@ -172,7 +173,8 @@ IMPORTANT:
      * Get all elements by tag name
      */
     getElements(state: XmlParsingState, tagName: string): XmlElement[] {
-        return state.extractedElements.get(tagName.toLowerCase()) || [];
+        const lookupTagName = state.caseSensitive ? tagName : tagName.toLowerCase();
+        return state.extractedElements.get(lookupTagName) || [];
     }
     
     private isValidXmlState(state: any): state is XmlParsingState {
@@ -186,6 +188,7 @@ IMPORTANT:
     }
     
     public initializeXmlState(config: XmlParsingConfig): XmlParsingState {
+        const caseSensitive = !!config.caseSensitive;
         return {
             // Base parsing state (required by interface)
             currentMode: 'idle',
@@ -211,8 +214,9 @@ IMPORTANT:
             currentElement: null,
             extractedElements: new Map(),
             potentialTagBuffer: '',
-            targetElements: new Set((config.targetElements || []).map(t => config.caseSensitive ? t : t.toLowerCase())),
-            streamingElements: new Set((config.streamingElements || []).map(t => config.caseSensitive ? t : t.toLowerCase())),
+            targetElements: new Set((config.targetElements || []).map(t => caseSensitive ? t : t.toLowerCase())),
+            streamingElements: new Set((config.streamingElements || []).map(t => caseSensitive ? t : t.toLowerCase())),
+            caseSensitive,
             hasParsingErrors: false,
             errorMessages: [],
             rawXmlBuffer: ''
@@ -360,15 +364,15 @@ IMPORTANT:
         state: XmlParsingState,
         callbacks: XmlStreamingCallbacks
     ): boolean {
-        const normalizedTagName = tagName.toLowerCase();
+        const closingTagName = state.caseSensitive ? tagName : tagName.toLowerCase();
         
         if (!state.currentElement) {
             this.handleParsingError(state, `Unexpected closing tag: ${tagName}`, callbacks);
             return false;
         }
         
-        // Verify tag matching (case insensitive)
-        if (state.currentElement.tagName.toLowerCase() !== normalizedTagName) {
+        const currentTagName = state.caseSensitive ? state.currentElement.tagName : state.currentElement.tagName.toLowerCase();
+        if (currentTagName !== closingTagName) {
             this.handleParsingError(state, `Mismatched closing tag: expected ${state.currentElement.tagName}, got ${tagName}`, callbacks);
             return false;
         }
@@ -377,7 +381,8 @@ IMPORTANT:
         state.currentElement.isComplete = true;
         
         // Mark streaming as complete (don't re-stream content, just mark complete)
-        if (state.streamingElements.has(normalizedTagName) && callbacks.onElementContent) {
+        const lookupTagName = state.caseSensitive ? state.currentElement.tagName : state.currentElement.tagName.toLowerCase();
+        if (state.streamingElements.has(lookupTagName) && callbacks.onElementContent) {
             callbacks.onElementContent(tagName, '', true);
         }
         
@@ -441,24 +446,24 @@ IMPORTANT:
         state.currentElement.content += content;
         
         // Stream content if configured
-        const normalizedTagName = state.currentElement.tagName.toLowerCase();
-        if (state.streamingElements.has(normalizedTagName) && callbacks.onElementContent) {
+        const lookupTagName = state.caseSensitive ? state.currentElement.tagName : state.currentElement.tagName.toLowerCase();
+        if (state.streamingElements.has(lookupTagName) && callbacks.onElementContent) {
             callbacks.onElementContent(state.currentElement.tagName, content, false);
         }
     }
     
     private handlePartialContent(state: XmlParsingState, callbacks: XmlStreamingCallbacks): void {
-        // If we have a current element and significant content, it might be partial content
-        if (state.currentElement && state.contentBuffer.length > 50) {
-            // Check if buffer might end with partial tag
+        // If we have a current element and content in the buffer, process it.
+        if (state.currentElement && state.contentBuffer.length > 0) {
+            // Check if buffer might end with a partial tag
             const hasPartialTag = state.contentBuffer.includes('<');
             
             if (!hasPartialTag) {
-                // Safe to process all content
+                // Safe to process all content as there's no partial tag
                 this.addContentToCurrentElement(state, state.contentBuffer, callbacks);
                 state.contentBuffer = '';
             } else {
-                // Process content before the last '<' character
+                // Process content before the last '<' character to avoid consuming a partial tag
                 const lastTagIndex = state.contentBuffer.lastIndexOf('<');
                 if (lastTagIndex > 0) {
                     const safeContent = state.contentBuffer.substring(0, lastTagIndex);
@@ -470,14 +475,14 @@ IMPORTANT:
     }
     
     private storeElement(state: XmlParsingState, element: XmlElement): void {
-        const normalizedTagName = element.tagName.toLowerCase();
+        const lookupTagName = state.caseSensitive ? element.tagName : element.tagName.toLowerCase();
         
         // Store if it's a target element or if no targets specified
-        if (state.targetElements.size === 0 || state.targetElements.has(normalizedTagName)) {
-            if (!state.extractedElements.has(normalizedTagName)) {
-                state.extractedElements.set(normalizedTagName, []);
+        if (state.targetElements.size === 0 || state.targetElements.has(lookupTagName)) {
+            if (!state.extractedElements.has(lookupTagName)) {
+                state.extractedElements.set(lookupTagName, []);
             }
-            state.extractedElements.get(normalizedTagName)!.push(element);
+            state.extractedElements.get(lookupTagName)!.push(element);
         }
     }
     
@@ -502,7 +507,7 @@ IMPORTANT:
             // Try to extract elements using lenient regex
             for (const targetElement of state.targetElements) {
                 if (!state.extractedElements.has(targetElement)) {
-                    const regex = new RegExp(`<${targetElement}[^>]*>(.*?)(?:<\\/${targetElement}>|$)`, 'is');
+                    const regex = new RegExp(`<${targetElement}[^>]*>(.*?)(?:<\\/${targetElement}>|$)`, state.caseSensitive ? 's' : 'is');
                     const match = state.rawXmlBuffer.match(regex);
                     
                     if (match) {

@@ -111,7 +111,7 @@ function c() {
     expect(result).toBe(expected);
   });
 
-  it.skip('should handle additions at the beginning', () => {
+  it('should handle additions at the beginning', () => {
     const original = `first line
 second line`;
 
@@ -284,9 +284,9 @@ stays the same`;
     const diff = `--- a/file.txt
 +++ b/file.txt`;
 
-    // Note: Implementation adds a trailing newline
+    // Note: Implementation should return original content
     const result = applyUnifiedDiff(original, diff);
-    expect(result).toBe(original + '\n');
+    expect(result).toBe(original);
   });
 
   it('should apply complex real-world diff', () => {

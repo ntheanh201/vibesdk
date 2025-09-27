@@ -8,10 +8,11 @@ import { setupRoutes } from './api/routes';
 import { CsrfService } from './services/csrf/CsrfService';
 import { SecurityError, SecurityErrorType } from 'shared/types/errors';
 import { getGlobalConfigurableSettings } from './config';
-import { AuthConfig, setAuthLevel } from './middleware/auth/routeAuth';
+import { AuthConfig, setAuthLevel, authMiddleware } from './middleware/auth/routeAuth';
+import { clerkAuthMiddleware } from './middleware/auth/clerk';
 // import { initHonoSentry } from './observability/sentry';
 
-export function createApp(env: Env): Hono<AppEnv> {
+export function createApp(): Hono<AppEnv> {
     const app = new Hono<AppEnv>();
 
     // Observability: Sentry error reporting & context
@@ -25,11 +26,11 @@ export function createApp(env: Env): Hono<AppEnv> {
             return next();
         }
         // Apply secure headers
-        return secureHeaders(getSecureHeadersConfig(env))(c, next);
+        return secureHeaders(getSecureHeadersConfig())(c, next);
     });
     
     // CORS configuration
-    app.use('/api/*', cors(getCORSConfig(env)));
+    app.use('/api/*', cors(getCORSConfig()));
     
     // CSRF protection using double-submit cookie pattern with proper GET handling
     app.use('*', async (c, next) => {
@@ -73,23 +74,23 @@ export function createApp(env: Env): Hono<AppEnv> {
 
     app.use('/api/*', async (c, next) => {
         // Apply global config middleware
-        const config = await getGlobalConfigurableSettings(env);
+        const config = await getGlobalConfigurableSettings();
         c.set('config', config);
 
-        // Apply global rate limit middleware. Should this be moved after setupRoutes so that maybe 'user' is available?
-        await RateLimitService.enforceGlobalApiRateLimit(env, c.get('config').security.rateLimit, null, c.req.raw)
+        // Apply global rate limit middleware.
+        await RateLimitService.enforceGlobalApiRateLimit(c.get('config').security.rateLimit, null, c.req.raw)
         await next();
     })
 
     // By default, all routes require authentication
-    app.use('/api/*', setAuthLevel(AuthConfig.ownerOnly));
+    app.use('/api/*', clerkAuthMiddleware, setAuthLevel(AuthConfig.ownerOnly), authMiddleware);
 
     // Now setup all the routes
     setupRoutes(app);
 
-    // Add not found route to redirect to ASSETS
+    // Add not found route
     app.notFound((c) => {
-        return c.env.ASSETS.fetch(c.req.raw);
+        return c.text('Not Found', 404);
     });
     return app;
 }
