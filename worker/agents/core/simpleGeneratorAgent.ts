@@ -38,6 +38,7 @@ import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
+import { generateProjectName, updatePackageJsonName, updateWranglerJsoncName } from '../../utils/projectConfigUpdater';
 import { generateBlueprint } from '../planning/blueprint';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
@@ -49,6 +50,7 @@ import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
+import { generateNanoId } from 'worker/utils/idGenerator';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -136,6 +138,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     initialState: CodeGenState = {
         blueprint: {} as Blueprint, 
+        projectName: "",
         query: "",
         generatedPhases: [],
         generatedFilesMap: {},
@@ -184,7 +187,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 getLogger: () => this.logger(),
                 env: this.env
             },
-            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH,
             SimpleCodeGeneratorAgent.MAX_COMMANDS_HISTORY
         );
     }
@@ -227,9 +229,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         const packageJson = templateInfo.templateDetails?.allFiles['package.json'];
 
         this.templateDetailsCache = templateInfo.templateDetails;
+
+        const projectName = generateProjectName(
+            blueprint?.projectName || templateInfo.templateDetails.name,
+            generateNanoId(),
+            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH
+        );
         
         this.setState({
             ...this.initialState,
+            projectName,
             query,
             blueprint,
             templateName: templateInfo.templateDetails.name,
@@ -274,18 +283,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`, { props });
         
         // Ignore if agent not initialized
-        if (!this.state.templateName?.trim()) {
-            const hasTemplateDetails = 'templateDetails' in (this.state as any);
-            if (hasTemplateDetails) {
-                const templateDetails = (this.state as any).templateDetails;
-                const templateName = (templateDetails as TemplateDetails).name;
-                delete (this.state as any).templateDetails;
-                this.setState({
-                    ...this.state,
-                    templateName
-                });
-            }
+        if (!this.state.query) {
+            this.logger().warn(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart ignored, agent not initialized`);
+            return;
         }
+        
+        // Ensure state is migrated for any previous versions
+        this.migrateStateIfNeeded();
         
         // Check if this is a read-only operation
         const readOnlyMode = props?.readOnlyMode === true;
@@ -355,7 +359,34 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             if (!results.success || !results.templateDetails) {
                 throw new Error(`Failed to get template details for template: ${this.state.templateName}`);
             }
-            this.templateDetailsCache = results.templateDetails;
+            
+            const templateDetails = results.templateDetails;
+            
+            this.logger().info(`Generated project name: ${this.state.projectName}`);
+            
+            // Update package.json with project name
+            try {
+                templateDetails.allFiles['package.json'] = updatePackageJsonName(
+                    templateDetails.allFiles['package.json'],
+                    this.state.projectName
+                );
+                this.logger().info('Updated package.json with project name');
+            } catch (error) {
+                this.logger().warn('Failed to update package.json name', error);
+            }
+            
+            // Update wrangler.jsonc with project name
+            try {
+                templateDetails.allFiles['wrangler.jsonc'] = updateWranglerJsoncName(
+                    templateDetails.allFiles['wrangler.jsonc'],
+                    this.state.projectName
+                );
+                this.logger().info('Updated wrangler.jsonc with project name');
+            } catch (error) {
+                this.logger().warn('Failed to update wrangler.jsonc name', error);
+            }
+            
+            this.templateDetailsCache = templateDetails;
             this.logger().info(`Template details for template: ${this.state.templateName} cached successfully`);
         }
         return this.templateDetailsCache;
@@ -1379,8 +1410,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     getSummary(): Promise<AgentSummary> {
-        // Ensure state is migrated before accessing files
-        this.migrateStateIfNeeded();
         const summaryData = {
             query: this.state.query,
             generatedCode: this.fileManager.getGeneratedFiles(),
@@ -1390,8 +1419,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     async getFullState(): Promise<CodeGenState> {
-        // Ensure state is migrated before returning state
-        this.migrateStateIfNeeded();
         return this.state;
     }
     

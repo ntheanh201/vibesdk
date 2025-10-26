@@ -30,7 +30,6 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
 
     constructor(
         options: ServiceOptions,
-        private projectNamePrefixMaxLength: number,
         private maxCommandsHistory: number
     ) {
         super(options);
@@ -533,14 +532,14 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
     private async createNewInstance(): Promise<BootstrapResponse | null> {
         const state = this.getState();
         const templateName = state.templateName;
+        const projectName = state.projectName;
         
-        // Generate unique project name
-        let prefix = (state.blueprint?.projectName || templateName)
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, '-');
-        const uniqueSuffix = generateId();
-        prefix = prefix.slice(0, this.projectNamePrefixMaxLength);
-        const projectName = `${prefix}-${uniqueSuffix}`.toLowerCase();
+        // // Generate unique project name
+        // const projectName = generateProjectName(
+        //     state.blueprint?.projectName || templateName,
+        //     generateId(),
+        //     this.projectNamePrefixMaxLength
+        // );
         
         // Webhook URL will be passed from agent
         // Agent generates it using getProtocolForHost and getAgentId()
