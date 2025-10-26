@@ -533,16 +533,6 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         const state = this.getState();
         const templateName = state.templateName;
         const projectName = state.projectName;
-        
-        // // Generate unique project name
-        // const projectName = generateProjectName(
-        //     state.blueprint?.projectName || templateName,
-        //     generateId(),
-        //     this.projectNamePrefixMaxLength
-        // );
-        
-        // Webhook URL will be passed from agent
-        // Agent generates it using getProtocolForHost and getAgentId()
 
         // Add AI proxy vars if AI template
         let localEnvVars: Record<string, string> = {};

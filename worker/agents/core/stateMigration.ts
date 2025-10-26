@@ -1,8 +1,8 @@
 import { CodeGenState, FileState } from './state';
 import { StructuredLogger } from '../../logger';
 import { TemplateDetails } from 'worker/services/sandbox/sandboxTypes';
-import { generateProjectName } from '../../utils/projectConfigUpdater';
 import { generateNanoId } from '../../utils/idGenerator';
+import { generateProjectName } from '../utils/templateCustomizer';
 
 export class StateMigration {
     static migrateIfNeeded(state: CodeGenState, logger: StructuredLogger): CodeGenState | null {
