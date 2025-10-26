@@ -11,7 +11,7 @@ import {
 } from './types';
 import { AgentSummary } from '../../../agents/core/types';
 import { createLogger } from '../../../logger';
-import { buildUserWorkerUrl } from 'worker/utils/urls';
+import { buildUserWorkerUrl, buildGitCloneUrl } from 'worker/utils/urls';
 import { JWTUtils } from '../../../utils/jwtUtils';
 
 export class AppViewController extends BaseController {
@@ -195,7 +195,7 @@ export class AppViewController extends BaseController {
                 token,
                 expiresIn,
                 expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-                cloneUrl: `https://${token}@${env.CUSTOM_DOMAIN}/app/${appId}.git`
+                cloneUrl: buildGitCloneUrl(env, appId, token)
             };
 
             return AppViewController.createSuccessResponse(responseData);

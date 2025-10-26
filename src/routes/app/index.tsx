@@ -22,6 +22,7 @@ import {
 	Globe,
 	Trash2,
 	Github,
+	GitBranch,
 } from 'lucide-react';
 import { MonacoEditor } from '@/components/monaco-editor/monaco-editor';
 import { getFileType } from '@/utils/string';
@@ -41,6 +42,8 @@ import { formatDistanceToNow, isValid } from 'date-fns';
 import { toast } from 'sonner';
 import { capitalizeFirstLetter, cn, getPreviewUrl } from '@/lib/utils';
 import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
+import { GitCloneModal } from '@/components/shared/GitCloneModal';
+import { GitCloneCommand, GitClonePrivatePrompt } from '@/components/shared/GitCloneInline';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { PreviewIframe } from '../chat/components/preview-iframe';
 
@@ -93,6 +96,7 @@ export default function AppView() {
 	const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [isDeleting, setIsDeleting] = useState(false);
+	const [isGitCloneModalOpen, setIsGitCloneModalOpen] = useState(false);
 	const [activeFilePath, setActiveFilePath] = useState<string>();
 	const previewIframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -607,6 +611,17 @@ export default function AppView() {
 									{isStarred ? 'Starred' : 'Star'}
 								</Button>
 
+								{/* Git Clone Button */}
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setIsGitCloneModalOpen(true)}
+									className="gap-2 text-text-primary"
+								>
+									<GitBranch className="h-4 w-4" />
+									Git Clone
+								</Button>
+
 								{/* GitHub Repository Button */}
 								{app.githubRepositoryUrl && (
 									<Button
@@ -753,13 +768,24 @@ export default function AppView() {
 					<TabsContent value="preview" className="flex-1">
 						<Card className="px-2">
 							<CardHeader className="overflow-hidden rounded-t">
-								<div className="flex items-center justify-between">
-									<CardTitle className="text-base">
+								<div className="flex items-center gap-4 min-w-0">
+									<CardTitle className="text-base flex-shrink-0">
 										Live Preview
 									</CardTitle>
-									<div className="flex items-center gap-0">
+									{/* Git Clone Inline Component - Right aligned with ml-auto */}
+									<div className="ml-auto flex items-center gap-2 min-w-0">
+										{app.visibility === 'public' ? (
+											<GitCloneCommand
+												cloneUrl={`${window.location.protocol}//${window.location.host}/apps/${app.id}.git`}
+												appTitle={app.title}
+											/>
+										) : isOwner ? (
+											<GitClonePrivatePrompt
+												onOpenModal={() => setIsGitCloneModalOpen(true)}
+											/>
+										) : null}
 										{appUrl && (
-											<>
+											<div className="flex items-center gap-0 flex-shrink-0">
 												<Button
 													variant="ghost"
 													size="sm"
@@ -790,7 +816,7 @@ export default function AppView() {
 												>
 													<ExternalLink className="h-3 w-3" />
 												</Button>
-											</>
+											</div>
 										)}
 									</div>
 								</div>
@@ -1071,6 +1097,16 @@ export default function AppView() {
 				onConfirm={handleDeleteApp}
 				isLoading={isDeleting}
 				appTitle={app?.title}
+			/>
+
+			{/* Git Clone Modal */}
+			<GitCloneModal
+				open={isGitCloneModalOpen}
+				onOpenChange={setIsGitCloneModalOpen}
+				appId={app.id}
+				appTitle={app.title}
+				isPublic={app.visibility === 'public'}
+				isOwner={isOwner}
 			/>
 		</div>
 	);
