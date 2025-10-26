@@ -393,40 +393,22 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             const templateDetails = results.templateDetails;
             
-            // Use customized files from generatedFilesMap if they exist (for all apps)
-            // Otherwise generate them (for older apps migrated before this feature)
-            const generatedFilesMap = this.fileManager.getGeneratedFilesMap();
+            const customizedAllFiles = { ...templateDetails.allFiles };
             
-            if (generatedFilesMap['package.json']) {
-                templateDetails.allFiles['package.json'] = generatedFilesMap['package.json'].fileContents;
-                this.logger().info('Using customized package.json from generated files');
-            } else {
-                // Older app - customize now
-                this.logger().info('Customizing template files for older app');
-                const customizedFiles = customizeTemplateFiles(
-                    templateDetails.allFiles,
-                    {
-                        projectName: this.state.projectName,
-                        commandsHistory: this.state.commandsHistory || []
-                    }
-                );
-                
-                // Update template cache with customized files
-                Object.assign(templateDetails.allFiles, customizedFiles);
-            }
+            this.logger().info('Customizing template files for older app');
+            const customizedFiles = customizeTemplateFiles(
+                templateDetails.allFiles,
+                {
+                    projectName: this.state.projectName,
+                    commandsHistory: this.state.commandsHistory || []
+                }
+            );
+            Object.assign(customizedAllFiles, customizedFiles);
             
-            // Also use other customized files if they exist
-            if (generatedFilesMap['wrangler.jsonc']) {
-                templateDetails.allFiles['wrangler.jsonc'] = generatedFilesMap['wrangler.jsonc'].fileContents;
-            }
-            if (generatedFilesMap['.bootstrap.js']) {
-                templateDetails.allFiles['.bootstrap.js'] = generatedFilesMap['.bootstrap.js'].fileContents;
-            }
-            if (generatedFilesMap['.gitignore']) {
-                templateDetails.allFiles['.gitignore'] = generatedFilesMap['.gitignore'].fileContents;
-            }
-            
-            this.templateDetailsCache = templateDetails;
+            this.templateDetailsCache = {
+                ...templateDetails,
+                allFiles: customizedAllFiles
+            };
             this.logger().info('Template details loaded and customized');
         }
         return this.templateDetailsCache;
@@ -434,6 +416,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     private getTemplateDetails(): TemplateDetails {
         if (!this.templateDetailsCache) {
+            this.ensureTemplateDetails();
             throw new Error('Template details not loaded. Call ensureTemplateDetails() first.');
         }
         return this.templateDetailsCache;
@@ -457,15 +440,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             {
                 filePath: '.bootstrap.js',
                 fileContents: bootstrapScript,
-                filePurpose: 'Bootstrap script for first-time clone setup'
+                filePurpose: 'Updated bootstrap script for first-time clone setup'
             },
             'Update bootstrap script with latest commands'
         );
-        
-        // Update cache
-        if (this.templateDetailsCache) {
-            this.templateDetailsCache.allFiles['.bootstrap.js'] = bootstrapScript;
-        }
         
         this.logger().info('Updated bootstrap script with latest commands', {
             commandCount: this.state.commandsHistory.length

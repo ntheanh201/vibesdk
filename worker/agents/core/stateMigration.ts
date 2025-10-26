@@ -172,12 +172,12 @@ export class StateMigration {
             needsMigration = true;
             logger.info('Generating missing projectName', { projectName: migratedProjectName });
         }
-        
+
         if (needsMigration) {
-            logger.info('Migrating state: schema format, conversation cleanup, and security fixes', {
+            logger.info('Migrating state: schema format, conversation cleanup, security fixes, and bootstrap setup', {
                 generatedFilesCount: Object.keys(migratedFilesMap).length,
                 finalConversationCount: migratedConversationMessages?.length || 0,
-                removedUserApiKeys: state.inferenceContext && 'userApiKeys' in state.inferenceContext
+                removedUserApiKeys: state.inferenceContext && 'userApiKeys' in state.inferenceContext,
             });
             
             const newState = {
