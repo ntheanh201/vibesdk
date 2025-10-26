@@ -18,7 +18,7 @@ export async function getAgentStub(env: Env, agentId: string) : Promise<DurableO
 
 export async function getAgentStubLightweight(env: Env, agentId: string) : Promise<DurableObjectStub<SmartCodeGeneratorAgent>> {
     return getAgentByName<Env, SmartCodeGeneratorAgent>(env.CodeGenObject, agentId, {
-        props: { readOnlyMode: true }
+        // props: { readOnlyMode: true }
     });
 }
 
