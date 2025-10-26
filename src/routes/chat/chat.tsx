@@ -10,7 +10,7 @@ import { ArrowRight, Image as ImageIcon } from 'react-feather';
 import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Expand, Github, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
+import { Expand, Github, GitBranch, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
 import { Blueprint } from './components/blueprint';
 import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
@@ -25,9 +25,11 @@ import { Copy } from './components/copy';
 import { useFileContentStream } from './hooks/use-file-content-stream';
 import { logger } from '@/utils/logger';
 import { useApp } from '@/hooks/use-app';
+import { useAuth } from '@/contexts/auth-context';
 import { AgentModeDisplay } from '@/components/agent-mode-display';
 import { useGitHubExport } from '@/hooks/use-github-export';
 import { GitHubExportModal } from '@/components/github-export-modal';
+import { GitCloneModal } from '@/components/shared/GitCloneModal';
 import { ModelConfigInfo } from './components/model-config-info';
 import { useAutoScroll } from '@/hooks/use-auto-scroll';
 import { useImageUpload } from '@/hooks/use-image-upload';
@@ -142,6 +144,7 @@ export default function Chat() {
 
 	// GitHub export functionality - use urlChatId directly from URL params
 	const githubExport = useGitHubExport(websocket, urlChatId, refetchApp);
+	const { user } = useAuth();
 
 	const navigate = useNavigate();
 
@@ -158,6 +161,7 @@ export default function Chat() {
 	const deploymentControlsRef = useRef<HTMLDivElement>(null);
 
 	const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+	const [isGitCloneModalOpen, setIsGitCloneModalOpen] = useState(false);
 
 	// Model config info state
 	const [modelConfigs, setModelConfigs] = useState<{
@@ -857,6 +861,16 @@ export default function Chat() {
 												loading={loadingConfigs}
 											/>
 											<button
+												className="group relative flex items-center gap-1.5 p-1.5 group-hover:pl-2 group-hover:pr-2.5 rounded-full group-hover:rounded-md transition-all duration-300 ease-in-out hover:bg-bg-4 border border-transparent hover:border-border-primary hover:shadow-sm overflow-hidden"
+												onClick={() => setIsGitCloneModalOpen(true)}
+												title="Clone Repository"
+											>
+												<GitBranch className="size-3.5 text-brand-primary transition-colors duration-300 flex-shrink-0" />
+												<span className="max-w-0 group-hover:max-w-[70px] opacity-0 group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-in-out whitespace-nowrap text-xs font-medium text-text-primary">
+													Git Clone
+												</span>
+											</button>
+											<button
 												className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all duration-200 text-xs font-medium shadow-sm ${
 													isGitHubExportReady
 														? 'bg-gray-800 hover:bg-gray-900 text-white'
@@ -879,17 +893,17 @@ export default function Chat() {
 															: "GitHub export disabled - waiting for chat session"
 												}
 											>
-												<Github className="size-3" />
+												<Github className="size-3.5" />
 												GitHub
 											</button>
 											<button
-												className="p-1 hover:bg-bg-2 rounded transition-colors"
+												className="p-1.5 rounded-full transition-all duration-300 ease-in-out hover:bg-bg-4 border border-transparent hover:border-border-primary hover:shadow-sm"
 												onClick={() => {
 													previewRef.current?.requestFullscreen();
 												}}
 												title="Fullscreen"
 											>
-												<Expand className="size-4 text-text-primary/50" />
+												<Expand className="size-3.5 text-text-primary/60 hover:text-brand-primary transition-colors duration-300" />
 											</button>
 										</div>
 									</div>
@@ -1062,7 +1076,7 @@ export default function Chat() {
 													title={isPhase1Complete ? "Export to GitHub" : "Complete Phase 1 to enable GitHub export"}
 													aria-label={isPhase1Complete ? "Export to GitHub" : "GitHub export disabled - complete Phase 1 first"}
 												>
-													<Github className="size-3" />
+													<Github className="size-3.5" />
 													GitHub
 												</button> */}
 												<ModelConfigInfo
@@ -1071,13 +1085,13 @@ export default function Chat() {
 													loading={loadingConfigs}
 												/>
 												<button
-													className="p-1 hover:bg-bg-2 rounded transition-colors"
+													className="p-1.5 rounded-full transition-all duration-300 ease-in-out hover:bg-bg-4 border border-transparent hover:border-border-primary hover:shadow-sm"
 													onClick={() => {
 														editorRef.current?.requestFullscreen();
 													}}
 													title="Fullscreen"
 												>
-													<Expand className="size-4 text-text-primary/50" />
+													<Expand className="size-3.5 text-text-primary/60 hover:text-brand-primary transition-colors duration-300" />
 												</button>
 											</div>
 										</div>
@@ -1177,6 +1191,18 @@ export default function Chat() {
 				agentId={urlChatId || undefined}
 				appTitle={app?.title}
 			/>
+
+			{/* Git Clone Modal */}
+			{urlChatId && app && (
+				<GitCloneModal
+					open={isGitCloneModalOpen}
+					onOpenChange={setIsGitCloneModalOpen}
+					appId={urlChatId}
+					appTitle={app.title || 'app'}
+					isPublic={app.visibility === 'public'}
+					isOwner={app.user?.id === user?.id}
+				/>
+			)}
 		</div>
 	);
 }

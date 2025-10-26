@@ -67,6 +67,14 @@ async function verifyGitAccess(
     appId: string
 ): Promise<{ hasAccess: boolean; appCreatedAt?: Date }> {
     logger.info('Verifying git access', { appId });
+    
+    // Log all headers for debugging
+    const headers: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+        headers[key] = key.toLowerCase().includes('auth') ? `${value.substring(0, 20)}...` : value;
+    });
+    logger.info('Request headers', { headers, url: request.url });
+    
     const appService = new AppService(env);
     const app = await appService.getAppDetails(appId);
     
@@ -84,18 +92,23 @@ async function verifyGitAccess(
 
     // Private apps: require authentication
     const authHeader = request.headers.get('Authorization');
+    logger.info('Private app - checking auth header', { hasAuthHeader: !!authHeader, authType: authHeader?.split(' ')[0] });
+    
     let token: string | null = null;
 
     if (authHeader?.startsWith('Bearer ')) {
         token = authHeader.slice(7);
+        logger.info('Extracted Bearer token', { tokenLength: token.length });
     } else if (authHeader?.startsWith('Basic ')) {
         // Git sends credentials as Basic auth
         const decoded = atob(authHeader.slice(6));
         const [username, password] = decoded.split(':');
         token = password || username;
+        logger.info('Extracted Basic auth token', { tokenLength: token?.length, hasUsername: !!username, hasPassword: !!password });
     }
 
     if (!token) {
+        logger.warn('No token found in auth header - will return 401 to prompt git for credentials');
         return { hasAccess: false };
     }
 
@@ -104,11 +117,21 @@ async function verifyGitAccess(
     const payload = await jwtUtils.verifyToken(token);
 
     if (!payload) {
+        logger.warn('Token verification failed - invalid or expired token');
         return { hasAccess: false };
     }
 
+    logger.info('Token verified', { userId: payload.sub, appOwnerId: app.userId });
+
     // Check if user owns the app
     const hasAccess = payload.sub === app.userId;
+    
+    if (!hasAccess) {
+        logger.warn('Access denied - user does not own this app', { userId: payload.sub, appOwnerId: app.userId });
+    } else {
+        logger.info('Access granted - user owns this app');
+    }
+    
     return { hasAccess, appCreatedAt: hasAccess ? (app.createdAt || undefined) : undefined };
 }
 
@@ -125,7 +148,13 @@ async function handleInfoRefs(
         // Verify access first
         const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
         if (!hasAccess) {
-            return new Response('Repository not found', { status: 404 });
+            // Return 401 with WWW-Authenticate to prompt git for credentials
+            return new Response('Authentication required', { 
+                status: 401,
+                headers: {
+                    'WWW-Authenticate': 'Basic realm="Git"'
+                }
+            });
         }
         
         const agentStub = await getAgentStub(env, appId);
@@ -217,7 +246,13 @@ async function handleUploadPack(
         // Verify access first
         const { hasAccess, appCreatedAt } = await verifyGitAccess(request, env, appId);
         if (!hasAccess) {
-            return new Response('Repository not found', { status: 404 });
+            // Return 401 with WWW-Authenticate to prompt git for credentials
+            return new Response('Authentication required', { 
+                status: 401,
+                headers: {
+                    'WWW-Authenticate': 'Basic realm="Git"'
+                }
+            });
         }
         
         const agentStub = await getAgentStub(env, appId);

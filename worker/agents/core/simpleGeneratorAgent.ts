@@ -273,17 +273,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     async onStart(props?: Record<string, unknown> | undefined): Promise<void> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`, { props });
         
-        // Check if this is a read-only operation
-        const readOnlyMode = props?.readOnlyMode === true;
-        
-        if (readOnlyMode) {
-            this.logger().info(`Agent ${this.getAgentId()} starting in READ-ONLY mode - skipping expensive initialization`);
-            return;
-        }
-        
-        // Full initialization for read-write operations
-        await this.gitInit();
-        
         // Ignore if agent not initialized
         if (!this.state.templateName?.trim()) {
             const hasTemplateDetails = 'templateDetails' in (this.state as any);
@@ -295,11 +284,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     ...this.state,
                     templateName
                 });
-            } else {
-                this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} not initialized, ignoring onStart`);
-                return;
             }
         }
+        
+        // Check if this is a read-only operation
+        const readOnlyMode = props?.readOnlyMode === true;
+        
+        if (readOnlyMode) {
+            this.logger().info(`Agent ${this.getAgentId()} starting in READ-ONLY mode - skipping expensive initialization`);
+            return;
+        }
+        
+        // Full initialization for read-write operations
+        await this.gitInit();
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart being processed, template name: ${this.state.templateName}`);
         // Fill the template cache
         await this.ensureTemplateDetails();
@@ -317,6 +314,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 this.logger().info("No commits found, creating initial commit");
                 // get all generated files and commit them
                 const generatedFiles = this.fileManager.getGeneratedFiles();
+                if (generatedFiles.length === 0) {
+                    this.logger().info("No generated files found, skipping initial commit");
+                    return;
+                }
                 await this.git.commit(generatedFiles, "Initial commit");
                 this.logger().info("Initial commit created successfully");
             }
@@ -671,7 +672,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             totalFiles: this.getTotalFiles()
         });
         await this.ensureTemplateDetails();
-        
+
         let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
         const generatedPhases = this.state.generatedPhases;
         const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
@@ -1759,6 +1760,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 },
                 onError: (data) => {
                     this.broadcast(WebSocketMessageResponses.DEPLOYMENT_FAILED, data);
+                },
+                onAfterSetupCommands: async () => {
+                    // Sync package.json after setup commands (includes dependency installs)
+                    await this.syncPackageJsonFromSandbox();
                 }
             }
         );
@@ -1944,6 +1949,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             commandsHistory: [...(this.state.commandsHistory || []), ...commands]
         });
+
+        // Sync package.json if any dependency-modifying commands were executed
+        const hasDependencyCommands = commands.some(cmd => 
+            cmd.includes('install') || 
+            cmd.includes(' add ') || 
+            cmd.includes('remove') ||
+            cmd.includes('uninstall')
+        );
+        
+        if (hasDependencyCommands) {
+            this.logger().info('Dependency commands executed, syncing package.json from sandbox');
+            await this.syncPackageJsonFromSandbox();
+        }
     }
 
     /**
@@ -2078,6 +2096,52 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
 
         this.saveExecutedCommands(successfulCommands);
+    }
+
+    /**
+     * Sync package.json from sandbox to agent's git repository
+     * Called after install/add/remove commands to keep dependencies in sync
+     */
+    private async syncPackageJsonFromSandbox(): Promise<void> {
+        try {
+            this.logger().info('Fetching current package.json from sandbox');
+            const results = await this.readFiles(['package.json']);
+            if (!results || !results.files || results.files.length === 0) {
+                this.logger().warn('Failed to fetch package.json from sandbox', { results });
+                return;
+            }
+            const packageJsonContent = results.files[0].content;
+            // Update state with latest package.json
+            this.setState({
+                ...this.state,
+                lastPackageJson: packageJsonContent
+            });
+            
+            // Commit to git repository
+            const fileState = await this.fileManager.saveGeneratedFile(
+                {
+                    filePath: 'package.json',
+                    fileContents: packageJsonContent,
+                    filePurpose: 'Project dependencies and configuration'
+                },
+                'chore: sync package.json dependencies from sandbox'
+            );
+            
+            this.logger().info('Successfully synced package.json to git', { 
+                filePath: fileState.filePath,
+                hash: fileState.lasthash 
+            });
+            
+            // Broadcast update to clients
+            this.broadcast(WebSocketMessageResponses.FILE_GENERATED, {
+                message: 'Synced package.json from sandbox',
+                file: fileState
+            });
+            
+        } catch (error) {
+            this.logger().error('Failed to sync package.json from sandbox', error);
+            // Non-critical error - don't throw, just log
+        }
     }
 
     async getLogs(_reset?: boolean, durationSeconds?: number): Promise<string> {

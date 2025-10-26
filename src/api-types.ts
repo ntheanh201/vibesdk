@@ -37,7 +37,8 @@ export type {
 export type {
   AppDetailsData,
   AppStarToggleData,
-  GeneratedCodeFile
+  GeneratedCodeFile,
+  GitCloneTokenData
 } from 'worker/api/controllers/appView/types';
 
 // User-related API Types

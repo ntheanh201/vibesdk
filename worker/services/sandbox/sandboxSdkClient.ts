@@ -190,7 +190,7 @@ export class SandboxSdkClient extends BaseSandboxService {
      */
     private async getInstanceSession(instanceId: string, cwd?: string): Promise<ExecutionSession> {
         if (!this.sessionCache.has(instanceId)) {
-            if (instanceId === 'sandbox-default' && !cwd) {
+            if (instanceId === 'sandbox-default') {
                 cwd = '/workspace';
             } else {
                 cwd = cwd || `/workspace/${instanceId}`;
