@@ -30,6 +30,7 @@ export const MAX_PHASES = 12;
 
 export interface CodeGenState {
     blueprint: Blueprint;
+    projectName: string,
     query: string;
     generatedFilesMap: Record<string, FileState >;
     generatedPhases: PhaseState[];

@@ -1,6 +1,8 @@
 import { CodeGenState, FileState } from './state';
 import { StructuredLogger } from '../../logger';
 import { TemplateDetails } from 'worker/services/sandbox/sandboxTypes';
+import { generateNanoId } from '../../utils/idGenerator';
+import { generateProjectName } from '../utils/templateCustomizer';
 
 export class StateMigration {
     static migrateIfNeeded(state: CodeGenState, logger: StructuredLogger): CodeGenState | null {
@@ -145,15 +147,30 @@ export class StateMigration {
         }
 
         //------------------------------------------------------------------------------------
-        // Migrate Template Details -> remove template details and instead use template name
+        // Migrate templateDetails -> templateName
         //------------------------------------------------------------------------------------
+        let migratedTemplateName = state.templateName;
         const hasTemplateDetails = 'templateDetails' in (state as any);
         if (hasTemplateDetails) {
-            needsMigration = true;
             const templateDetails = (state as any).templateDetails;
-            const templateName = (templateDetails as TemplateDetails).name;
-            delete (state as any).templateDetails;
-            (state as any).templateName = templateName;
+            migratedTemplateName = (templateDetails as TemplateDetails).name;
+            needsMigration = true;
+            logger.info('Migrating templateDetails to templateName', { templateName: migratedTemplateName });
+        }
+
+        //------------------------------------------------------------------------------------
+        // Migrate projectName -> generate if missing
+        //------------------------------------------------------------------------------------
+        let migratedProjectName = state.projectName;
+        if (!state.projectName) {
+            // Generate project name for older apps
+            migratedProjectName = generateProjectName(
+                state.blueprint?.projectName || migratedTemplateName || state.query,
+                generateNanoId(),
+                20
+            );
+            needsMigration = true;
+            logger.info('Generating missing projectName', { projectName: migratedProjectName });
         }
         
         if (needsMigration) {
@@ -168,11 +185,17 @@ export class StateMigration {
                 generatedFilesMap: migratedFilesMap,
                 conversationMessages: migratedConversationMessages,
                 inferenceContext: migratedInferenceContext,
-                projectUpdatesAccumulator: []
+                projectUpdatesAccumulator: [],
+                templateName: migratedTemplateName,
+                projectName: migratedProjectName
             };
             
+            // Remove deprecated fields
             if (stateHasDeprecatedProps) {
                 delete (newState as any).latestScreenshot;
+            }
+            if (hasTemplateDetails) {
+                delete (newState as any).templateDetails;
             }
             
             return newState;

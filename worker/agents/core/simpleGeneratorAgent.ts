@@ -38,6 +38,7 @@ import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand } from '../utils/common';
+import { customizeTemplateFiles, generateBootstrapScript, generateProjectName } from '../utils/templateCustomizer';
 import { generateBlueprint } from '../planning/blueprint';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
@@ -49,6 +50,7 @@ import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
+import { generateNanoId } from 'worker/utils/idGenerator';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -136,6 +138,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     initialState: CodeGenState = {
         blueprint: {} as Blueprint, 
+        projectName: "",
         query: "",
         generatedPhases: [],
         generatedFilesMap: {},
@@ -184,7 +187,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 getLogger: () => this.logger(),
                 env: this.env
             },
-            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH,
             SimpleCodeGeneratorAgent.MAX_COMMANDS_HISTORY
         );
     }
@@ -227,9 +229,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         const packageJson = templateInfo.templateDetails?.allFiles['package.json'];
 
         this.templateDetailsCache = templateInfo.templateDetails;
+
+        const projectName = generateProjectName(
+            blueprint?.projectName || templateInfo.templateDetails.name,
+            generateNanoId(),
+            SimpleCodeGeneratorAgent.PROJECT_NAME_PREFIX_MAX_LENGTH
+        );
+        
+        this.logger().info('Generated project name', { projectName });
         
         this.setState({
             ...this.initialState,
+            projectName,
             query,
             blueprint,
             templateName: templateInfo.templateDetails.name,
@@ -241,6 +252,35 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             hostname,
             inferenceContext,
         });
+
+        await this.gitInit();
+        
+        // Customize template files (package.json, wrangler.jsonc, .bootstrap.js, .gitignore)
+        const customizedFiles = customizeTemplateFiles(
+            templateInfo.templateDetails.allFiles,
+            {
+                projectName,
+                commandsHistory: [] // Empty initially, will be updated later
+            }
+        );
+        
+        this.logger().info('Customized template files', { 
+            files: Object.keys(customizedFiles) 
+        });
+        
+        // Save customized files to git
+        const filesToSave = Object.entries(customizedFiles).map(([filePath, content]) => ({
+            filePath,
+            fileContents: content,
+            filePurpose: 'Project configuration file'
+        }));
+        
+        await this.fileManager.saveGeneratedFiles(
+            filesToSave,
+            'Initialize project configuration files'
+        );
+        
+        this.logger().info('Committed customized template files to git');
 
         this.initializeAsync().catch((error: unknown) => {
             this.broadcastError("Initialization failed", error);
@@ -274,18 +314,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart`, { props });
         
         // Ignore if agent not initialized
-        if (!this.state.templateName?.trim()) {
-            const hasTemplateDetails = 'templateDetails' in (this.state as any);
-            if (hasTemplateDetails) {
-                const templateDetails = (this.state as any).templateDetails;
-                const templateName = (templateDetails as TemplateDetails).name;
-                delete (this.state as any).templateDetails;
-                this.setState({
-                    ...this.state,
-                    templateName
-                });
-            }
+        if (!this.state.query) {
+            this.logger().warn(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart ignored, agent not initialized`);
+            return;
         }
+        
+        // Ensure state is migrated for any previous versions
+        this.migrateStateIfNeeded();
         
         // Check if this is a read-only operation
         const readOnlyMode = props?.readOnlyMode === true;
@@ -350,13 +385,49 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     async ensureTemplateDetails() {
         if (!this.templateDetailsCache) {
-            this.logger().info(`Template details being cached for template: ${this.state.templateName}`);
+            this.logger().info(`Loading template details for: ${this.state.templateName}`);
             const results = await BaseSandboxService.getTemplateDetails(this.state.templateName);
             if (!results.success || !results.templateDetails) {
-                throw new Error(`Failed to get template details for template: ${this.state.templateName}`);
+                throw new Error(`Failed to get template details for: ${this.state.templateName}`);
             }
-            this.templateDetailsCache = results.templateDetails;
-            this.logger().info(`Template details for template: ${this.state.templateName} cached successfully`);
+            
+            const templateDetails = results.templateDetails;
+            
+            // Use customized files from generatedFilesMap if they exist (for all apps)
+            // Otherwise generate them (for older apps migrated before this feature)
+            const generatedFilesMap = this.fileManager.getGeneratedFilesMap();
+            
+            if (generatedFilesMap['package.json']) {
+                templateDetails.allFiles['package.json'] = generatedFilesMap['package.json'].fileContents;
+                this.logger().info('Using customized package.json from generated files');
+            } else {
+                // Older app - customize now
+                this.logger().info('Customizing template files for older app');
+                const customizedFiles = customizeTemplateFiles(
+                    templateDetails.allFiles,
+                    {
+                        projectName: this.state.projectName,
+                        commandsHistory: this.state.commandsHistory || []
+                    }
+                );
+                
+                // Update template cache with customized files
+                Object.assign(templateDetails.allFiles, customizedFiles);
+            }
+            
+            // Also use other customized files if they exist
+            if (generatedFilesMap['wrangler.jsonc']) {
+                templateDetails.allFiles['wrangler.jsonc'] = generatedFilesMap['wrangler.jsonc'].fileContents;
+            }
+            if (generatedFilesMap['.bootstrap.js']) {
+                templateDetails.allFiles['.bootstrap.js'] = generatedFilesMap['.bootstrap.js'].fileContents;
+            }
+            if (generatedFilesMap['.gitignore']) {
+                templateDetails.allFiles['.gitignore'] = generatedFilesMap['.gitignore'].fileContents;
+            }
+            
+            this.templateDetailsCache = templateDetails;
+            this.logger().info('Template details loaded and customized');
         }
         return this.templateDetailsCache;
     }
@@ -366,6 +437,39 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             throw new Error('Template details not loaded. Call ensureTemplateDetails() first.');
         }
         return this.templateDetailsCache;
+    }
+
+    /**
+     * Update bootstrap script when commands history changes
+     * Called after significant command executions
+     */
+    private async updateBootstrapScript(): Promise<void> {
+        if (!this.state.commandsHistory || this.state.commandsHistory.length === 0) {
+            return;
+        }
+        
+        const bootstrapScript = generateBootstrapScript(
+            this.state.projectName,
+            this.state.commandsHistory
+        );
+        
+        await this.fileManager.saveGeneratedFile(
+            {
+                filePath: '.bootstrap.js',
+                fileContents: bootstrapScript,
+                filePurpose: 'Bootstrap script for first-time clone setup'
+            },
+            'Update bootstrap script with latest commands'
+        );
+        
+        // Update cache
+        if (this.templateDetailsCache) {
+            this.templateDetailsCache.allFiles['.bootstrap.js'] = bootstrapScript;
+        }
+        
+        this.logger().info('Updated bootstrap script with latest commands', {
+            commandCount: this.state.commandsHistory.length
+        });
     }
 
     /*
@@ -1379,8 +1483,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     getSummary(): Promise<AgentSummary> {
-        // Ensure state is migrated before accessing files
-        this.migrateStateIfNeeded();
         const summaryData = {
             query: this.state.query,
             generatedCode: this.fileManager.getGeneratedFiles(),
@@ -1390,8 +1492,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     async getFullState(): Promise<CodeGenState> {
-        // Ensure state is migrated before returning state
-        this.migrateStateIfNeeded();
         return this.state;
     }
     
@@ -1949,6 +2049,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             commandsHistory: [...(this.state.commandsHistory || []), ...commands]
         });
+
+        // Update bootstrap script with latest commands
+        await this.updateBootstrapScript();
 
         // Sync package.json if any dependency-modifying commands were executed
         const hasDependencyCommands = commands.some(cmd => 
@@ -2586,6 +2689,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         try {
             // Export git objects efficiently (minimal DO memory usage)
             const gitObjects = this.git.fs.exportGitObjects();
+
+            await this.gitInit();
             
             // Ensure template details are available
             await this.ensureTemplateDetails();
