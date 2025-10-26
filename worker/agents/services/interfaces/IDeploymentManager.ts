@@ -10,6 +10,7 @@ export interface SandboxDeploymentCallbacks {
     onStarted?: (data: Omit<DeploymentStartedMessage, 'type'>) => void;
     onCompleted?: (data: Omit<DeploymentCompletedMessage, 'type'>) => void;
     onError?: (data: Omit<DeploymentFailedMessage, 'type'>) => void;
+    onAfterSetupCommands?: () => Promise<void>; // Called after setup commands execute (e.g., for package.json sync)
 }
 
 /**
@@ -76,7 +77,7 @@ export interface IDeploymentManager {
     /**
      * Execute setup commands during redeployment
      */
-    executeSetupCommands(sandboxInstanceId: string, timeoutMs?: number): Promise<void>;
+    executeSetupCommands(sandboxInstanceId: string, timeoutMs?: number, onAfterCommands?: () => Promise<void>): Promise<void>;
 
     /**
      * Deploy to sandbox

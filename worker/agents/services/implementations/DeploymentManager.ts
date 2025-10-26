@@ -114,8 +114,13 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
 
     /**
      * Execute setup commands (used during redeployment)
+     * @param onAfterCommands Optional callback invoked after commands complete (e.g., for syncing package.json)
      */
-    async executeSetupCommands(sandboxInstanceId: string, timeoutMs: number = 60000): Promise<void> {
+    async executeSetupCommands(
+        sandboxInstanceId: string, 
+        timeoutMs: number = 60000,
+        onAfterCommands?: () => Promise<void>
+    ): Promise<void> {
         const { commandsHistory } = this.getState();
         const logger = this.getLog();
         const client = this.getClient();
@@ -139,6 +144,12 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
         );
         
         logger.info('Setup commands executed successfully');
+        
+        // Invoke callback if provided (e.g., for package.json sync)
+        if (onAfterCommands) {
+            logger.info('Invoking post-command callback');
+            await onAfterCommands();
+        }
     }
 
     /**
@@ -356,8 +367,12 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 // Success! Start health check and return
                 if (result.redeployed || this.healthCheckInterval === null) {
                     this.startHealthCheckInterval(result.sandboxInstanceId);
-                    // Execute setup commands
-                    await this.executeSetupCommands(result.sandboxInstanceId);
+                    // Execute setup commands with callback
+                    await this.executeSetupCommands(
+                        result.sandboxInstanceId,
+                        undefined,
+                        callbacks?.onAfterSetupCommands
+                    );
                 }
 
                 const preview = {
@@ -517,7 +532,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      */
     private async createNewInstance(): Promise<BootstrapResponse | null> {
         const state = this.getState();
-        const templateName = state.templateName || 'scratch';
+        const templateName = state.templateName;
         
         // Generate unique project name
         let prefix = (state.blueprint?.projectName || templateName)
