@@ -731,8 +731,10 @@ export default function AppView() {
 					onValueChange={setActiveTab}
 					className="flex flex-col flex-1 gap-2"
 				>
-					{/* Using proper TabsList and TabsTrigger components */}
-					<TabsList className="inline-flex h-auto w-fit items-center gap-0.5 bg-bg-2 dark:bg-bg-1 rounded-md p-0.5 border border-border-primary/30 ml-0">
+					{/* Tab switcher and Git Clone inline */}
+					<div className="flex items-center gap-4">
+						{/* Using proper TabsList and TabsTrigger components */}
+						<TabsList className="inline-flex h-auto w-fit items-center gap-0.5 bg-bg-2 dark:bg-bg-1 rounded-md p-0.5 border border-border-primary/30">
 						<TabsTrigger 
 							value="preview" 
 							className="px-3 py-1.5 rounded text-xs font-medium data-[state=active]:bg-bg-4 dark:data-[state=active]:bg-bg-3 data-[state=active]:text-text-primary data-[state=active]:shadow-sm"
@@ -763,7 +765,22 @@ export default function AppView() {
 							)} />
 							Prompt
 						</TabsTrigger>
-					</TabsList>
+						</TabsList>
+						
+						{/* Git Clone - Inline with tabs */}
+						<div className="flex-shrink-0">
+							{app.visibility === 'public' ? (
+								<GitCloneCommand
+									cloneUrl={`${window.location.protocol}//${window.location.host}/apps/${app.id}.git`}
+									appTitle={app.title}
+								/>
+							) : isOwner ? (
+								<GitClonePrivatePrompt
+									onOpenModal={() => setIsGitCloneModalOpen(true)}
+								/>
+							) : null}
+						</div>
+					</div>
 
 					<TabsContent value="preview" className="flex-1">
 						<Card className="px-2">
@@ -772,53 +789,41 @@ export default function AppView() {
 									<CardTitle className="text-base flex-shrink-0">
 										Live Preview
 									</CardTitle>
-									{/* Git Clone Inline Component - Right aligned with ml-auto */}
-									<div className="ml-auto flex items-center gap-2 min-w-0">
-										{app.visibility === 'public' ? (
-											<GitCloneCommand
-												cloneUrl={`${window.location.protocol}//${window.location.host}/apps/${app.id}.git`}
-												appTitle={app.title}
-											/>
-										) : isOwner ? (
-											<GitClonePrivatePrompt
-												onOpenModal={() => setIsGitCloneModalOpen(true)}
-											/>
-										) : null}
-										{appUrl && (
-											<div className="flex items-center gap-0 flex-shrink-0">
-												<Button
-													variant="ghost"
-													size="sm"
-													onClick={handleCopyUrl}
-													className="gap-2"
-												>
-													{copySuccess ? (
-														<>
-															<Check className="h-3 w-3" />
-															Copied!
-														</>
-													) : (
-														<>
-															<Copy className="h-3 w-3" />
-														</>
-													)}
-												</Button>
-												<Button
-													variant="ghost"
-													size="sm"
-													onClick={() =>
-														window.open(
-															appUrl,
-															'_blank',
-														)
-													}
-													className="gap-2"
-												>
-													<ExternalLink className="h-3 w-3" />
-												</Button>
-											</div>
-										)}
-									</div>
+									{/* Preview URL action buttons */}
+									{appUrl && (
+										<div className="ml-auto flex items-center gap-0 flex-shrink-0">
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={handleCopyUrl}
+												className="gap-2"
+											>
+												{copySuccess ? (
+													<>
+														<Check className="h-3 w-3" />
+														Copied!
+													</>
+												) : (
+													<>
+														<Copy className="h-3 w-3" />
+													</>
+												)}
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={() =>
+													window.open(
+														appUrl,
+														'_blank',
+													)
+												}
+												className="gap-2"
+											>
+												<ExternalLink className="h-3 w-3" />
+											</Button>
+										</div>
+									)}
 								</div>
 							</CardHeader>
 							<CardContent className="p-0">
