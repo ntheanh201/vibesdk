@@ -52,8 +52,7 @@ export class FileManager implements IFileManager {
             const oldFile = filesMap[file.filePath];
             
             // Get comparison base: from generatedFilesMap, template/filesystem, or empty string for new files
-            // TODO: fix checking against template files
-            const oldFileContents = oldFile?.fileContents ?? (this.getGeneratedFile(file.filePath)?.fileContents || '');
+            const oldFileContents = oldFile?.fileContents ?? (this.getFile(file.filePath)?.fileContents || '');
             
             // Generate diff if contents changed
             if (oldFileContents !== file.fileContents) {
@@ -81,9 +80,12 @@ export class FileManager implements IFileManager {
         });
 
         try {
-            console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
-            await this.git.commit(fileStates, commitMessage);
-            console.log(`[FileManager] Commit successful`);
+            const shouldCommit = fileStates.length > 0 && fileStates.some(fileState => fileState.lastDiff !== '');
+            if (shouldCommit) {
+                console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
+                await this.git.commit(fileStates, commitMessage);
+                console.log(`[FileManager] Commit successful`);
+            }
         } catch (error) {
             console.error(`[FileManager] Failed to commit files:`, error, commitMessage);
         }
@@ -123,15 +125,20 @@ export class FileManager implements IFileManager {
     }
 
     getTemplateFile(filePath: string) : FileOutputType | null {
-        const templateDetails = this.getTemplateDetailsFunc();
-        const fileContents = templateDetails.allFiles[filePath];
-        if (!fileContents) {
+        try {
+            const templateDetails = this.getTemplateDetailsFunc();
+            const fileContents = templateDetails.allFiles[filePath];
+            if (!fileContents) {
+                return null;
+            }
+            return {
+                filePath,
+                fileContents,
+                filePurpose: 'Bootstrapped template file',
+            }
+        } catch (error) {
+            console.error(`[FileManager] Failed to get template file:`, error, filePath);
             return null;
-        }
-        return {
-            filePath,
-            fileContents,
-            filePurpose: 'Bootstrapped template file',
         }
     }
 

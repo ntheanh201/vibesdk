@@ -2192,6 +2192,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 return;
             }
             const packageJsonContent = results.files[0].content;
+
+            // Check if package.json has changed
+            if (packageJsonContent === this.state.lastPackageJson) {
+                this.logger().info('package.json has not changed, skipping sync');
+                return;
+            }
             // Update state with latest package.json
             this.setState({
                 ...this.state,
