@@ -950,9 +950,6 @@ export class SandboxSdkClient extends BaseSandboxService {
                     if (localEnvVars) {
                         await this.setLocalEnvVars(instanceId, localEnvVars);
                     }
-                    // Initialize git repository
-                    await this.executeCommand(instanceId, `git init`);
-                    this.logger.info('Git repository initialized', { instanceId });
                     // Start dev server on allocated port
                     const processId = await this.startDevServer(instanceId, allocatedPort);
                     this.logger.info('Instance created successfully', { instanceId, processId, port: allocatedPort });
@@ -1275,7 +1272,7 @@ export class SandboxSdkClient extends BaseSandboxService {
     // FILE OPERATIONS
     // ==========================================
 
-    async writeFiles(instanceId: string, files: WriteFilesRequest['files'], commitMessage?: string): Promise<WriteFilesResponse> {
+    async writeFiles(instanceId: string, files: WriteFilesRequest['files']): Promise<WriteFilesResponse> {
         try {
             const session = await this.getInstanceSession(instanceId);
 
@@ -1323,14 +1320,6 @@ export class SandboxSdkClient extends BaseSandboxService {
             // If code files were modified, touch vite.config.ts to trigger a rebuild
             if (successCount > 0 && filteredFiles.some(file => file.filePath.endsWith('.ts') || file.filePath.endsWith('.tsx'))) {
                 await session.exec(`touch vite.config.ts`);
-            }
-
-            // Try to commit
-            try {
-                const commitResult = await this.createLatestCommit(instanceId, commitMessage || 'Initial commit');
-                this.logger.info('Files committed to git', { result: commitResult });
-            } catch (error) {
-                this.logger.error('Git commit failed', { error: error instanceof Error ? error.message : 'Unknown error' });
             }
 
             return {
@@ -2087,67 +2076,4 @@ export class SandboxSdkClient extends BaseSandboxService {
         }
         return 'https';
     }
-
-    // ==========================================
-    // GITHUB INTEGRATION
-    // ==========================================
-
-    private async createLatestCommit(instanceId: string, commitMessage: string): Promise<string> {
-        // Sanitize commit message to prevent shell injection
-        // Remove control characters, limit length, and escape special characters
-        const sanitizedMessage = commitMessage
-            .substring(0, 500) // Limit message length
-            .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
-            .replace(/[`$\\]/g, '\\$&') // Escape backticks, dollar signs, and backslashes
-            .replace(/"/g, '\\"') // Escape double quotes
-            .trim() || 'Auto-commit'; // Fallback to default message if empty
-        
-        // Check if there are changes to commit
-        const statusResult = await this.executeCommand(instanceId, `git status --porcelain`);
-        if (statusResult.exitCode !== 0) {
-            this.logger.warn(`Git status check failed: ${statusResult.stderr}`);
-        } else if (!statusResult.stdout.trim()) {
-            this.logger.info('No changes to commit');
-            // Return current HEAD if no changes
-            const hashResult = await this.executeCommand(instanceId, `git rev-parse HEAD`);
-            if (hashResult.exitCode === 0) {
-                return hashResult.stdout.trim();
-            }
-            throw new Error(`No commits found in repository: ${hashResult.stderr}`);
-        }
-        
-        // Add all changes (including untracked files)
-        const addResult = await this.executeCommand(instanceId, `git add -A`);
-        if (addResult.exitCode !== 0) {
-            // Try alternative add command if the first fails
-            const altAddResult = await this.executeCommand(instanceId, `git add . 2>/dev/null || git add --all`);
-            if (altAddResult.exitCode !== 0) {
-                throw new Error(`Git add failed: ${addResult.stderr || altAddResult.stderr}`);
-            }
-        }
-        
-        // Commit with sanitized message
-        const commitResult = await this.executeCommand(instanceId, `git commit -m "${sanitizedMessage}" --allow-empty-message`);
-        if (commitResult.exitCode !== 0) {
-            // Check if error is due to no changes (shouldn't happen due to earlier check, but be safe)
-            if (commitResult.stdout.includes('nothing to commit') || 
-                commitResult.stderr.includes('nothing to commit')) {
-                this.logger.info('Nothing to commit, working tree clean');
-                const hashResult = await this.executeCommand(instanceId, `git rev-parse HEAD`);
-                if (hashResult.exitCode === 0) {
-                    return hashResult.stdout.trim();
-                }
-            }
-            throw new Error(`Git commit failed: ${commitResult.stderr}`);
-        }
-        
-        // Extract commit hash from the commit result
-        const hashResult = await this.executeCommand(instanceId, `git rev-parse HEAD`);
-        if (hashResult.exitCode === 0) {
-            return hashResult.stdout.trim();
-        }
-        throw new Error(`Git rev-parse failed: ${hashResult.stderr}`);
-    }
-
-
 }
