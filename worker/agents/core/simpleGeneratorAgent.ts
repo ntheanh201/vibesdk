@@ -7,7 +7,7 @@ import {
     FileOutputType,
     PhaseImplementationSchemaType,
 } from '../schemas';
-import { GitHubPushRequest, PreviewType, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
+import { ExecuteCommandsResponse, GitHubPushRequest, PreviewType, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
 import {  GitHubExportResult } from '../../services/github/types';
 import { GitHubService } from '../../services/github/GitHubService';
 import { CodeGenState, CurrentDevState, MAX_PHASES } from './state';
@@ -37,7 +37,7 @@ import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
-import { looksLikeCommand } from '../utils/common';
+import { looksLikeCommand, validateAndCleanBootstrapCommands } from '../utils/common';
 import { customizeTemplateFiles, generateBootstrapScript, generateProjectName } from '../utils/templateCustomizer';
 import { generateBlueprint } from '../planning/blueprint';
 import { AppService } from '../../database';
@@ -426,14 +426,27 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
      * Update bootstrap script when commands history changes
      * Called after significant command executions
      */
-    private async updateBootstrapScript(): Promise<void> {
-        if (!this.state.commandsHistory || this.state.commandsHistory.length === 0) {
+    private async updateBootstrapScript(commandsHistory: string[]): Promise<void> {
+        if (!commandsHistory || commandsHistory.length === 0) {
             return;
         }
         
+        // Final validation before writing (safety net)
+        const { validCommands, invalidCommands } = validateAndCleanBootstrapCommands(commandsHistory);
+        
+        if (invalidCommands.length > 0) {
+            this.logger().warn('[commands] CRITICAL: Invalid commands detected in bootstrap history', {
+                invalidCommands,
+                willBeRejected: true,
+                validCount: validCommands.length,
+                invalidCount: invalidCommands.length
+            });
+        }
+        
+        // Use only validated commands
         const bootstrapScript = generateBootstrapScript(
             this.state.projectName,
-            this.state.commandsHistory
+            validCommands
         );
         
         await this.fileManager.saveGeneratedFile(
@@ -445,8 +458,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             'Update bootstrap script with latest commands'
         );
         
-        this.logger().info('Updated bootstrap script with latest commands', {
-            commandCount: this.state.commandsHistory.length
+        this.logger().info('Updated bootstrap script with validated commands', {
+            commandCount: validCommands.length,
+            commands: validCommands
         });
     }
 
@@ -1735,15 +1749,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return { files: resp.files.map(f => ({ path: f.filePath, content: f.fileContents })) };
     }
 
-    async execCommands(commands: string[], shouldSave: boolean, timeout?: number) {
+    async execCommands(commands: string[], shouldSave: boolean, timeout?: number): Promise<ExecuteCommandsResponse> {
         const { sandboxInstanceId } = this.state;
         if (!sandboxInstanceId) {
             return { success: false, results: [], error: 'No sandbox instance' } as any;
         }
-        await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
+        const result = await this.getSandboxServiceClient().executeCommands(sandboxInstanceId, commands, timeout);
         if (shouldSave) {
             this.saveExecutedCommands(commands);
         }
+        return result;
     }
 
     async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }> {
@@ -2023,13 +2038,31 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     private async saveExecutedCommands(commands: string[]) {
         this.logger().info('Saving executed commands', { commands });
+        
+        // Merge with existing history
+        const mergedCommands = [...(this.state.commandsHistory || []), ...commands];
+        
+        // Validate, deduplicate, and clean
+        const { validCommands, invalidCommands, deduplicated } = validateAndCleanBootstrapCommands(mergedCommands);
+
+        // Log what was filtered out
+        if (invalidCommands.length > 0 || deduplicated > 0) {
+            this.logger().warn('[commands] Bootstrap commands cleaned', { 
+                invalidCommands,
+                invalidCount: invalidCommands.length,
+                deduplicatedCount: deduplicated,
+                finalCount: validCommands.length
+            });
+        }
+
+        // Update state with cleaned commands
         this.setState({
             ...this.state,
-            commandsHistory: [...(this.state.commandsHistory || []), ...commands]
+            commandsHistory: validCommands
         });
 
-        // Update bootstrap script with latest commands
-        await this.updateBootstrapScript();
+        // Update bootstrap script with validated commands
+        await this.updateBootstrapScript(validCommands);
 
         // Sync package.json if any dependency-modifying commands were executed
         const hasDependencyCommands = commands.some(cmd => 

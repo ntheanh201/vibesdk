@@ -20,7 +20,7 @@ export function createExecCommandsTool(
 		function: {
 			name: 'exec_commands',
 			description:
-				'Execute shell commands in the sandbox (e.g., install dependencies). set shouldSave to true if you want the command to be saved in the history so that is executed again in the future. Otherwise, the changes would only persist in the current sandbox session. Always set shouldSave to true for install commands (and always use bun)',
+				'Execute shell commands in the sandbox. CRITICAL shouldSave rules: (1) Set shouldSave=true ONLY for package management with specific packages (e.g., "bun add react", "npm install lodash"). (2) Set shouldSave=false for: file operations (rm, mv, cp), plain installs ("bun install"), run commands ("bun run dev"), and temporary operations. Invalid commands in shouldSave=true will be automatically filtered out. Always use bun for package management.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -35,6 +35,8 @@ export function createExecCommandsTool(
 			try {
 				logger.info('Executing commands', {
 					count: commands.length,
+                    commands,
+					shouldSave,
 					timeout,
 				});
 				return await agent.execCommands(commands, shouldSave, timeout);

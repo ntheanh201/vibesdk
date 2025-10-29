@@ -11,8 +11,9 @@ import { generateId } from '../../../utils/idGenerator';
 import { generateAppProxyToken, generateAppProxyUrl } from '../../../services/aigateway-proxy/controller';
 import { BaseAgentService } from './BaseAgentService';
 import { ServiceOptions } from '../interfaces/IServiceOptions';
-import { BaseSandboxService } from '../../../services/sandbox/BaseSandboxService';
+import { BaseSandboxService } from 'worker/services/sandbox/BaseSandboxService';
 import { getSandboxService } from '../../../services/sandbox/factory';
+import { validateAndCleanBootstrapCommands } from 'worker/agents/utils/common';
 
 const PER_ATTEMPT_TIMEOUT_MS = 60000;  // 60 seconds per individual attempt
 const MASTER_DEPLOYMENT_TIMEOUT_MS = 300000;  // 5 minutes total
@@ -128,16 +129,29 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             return;
         }
 
-        let cmds = commandsHistory;
-        if (cmds.length > this.maxCommandsHistory) {
-            // Deduplicate
-            cmds = Array.from(new Set(commandsHistory));
+        // CRITICAL: Audit bootstrap commands before execution (safety net)
+        const { validCommands, invalidCommands } = validateAndCleanBootstrapCommands(
+            commandsHistory, 
+            this.maxCommandsHistory
+        );
+        
+        if (invalidCommands.length > 0) {
+            logger.warn('[commands] DANGEROUS COMMANDS DETECTED IN BOOTSTRAP - FILTERED OUT', {
+                dangerous: invalidCommands,
+                dangerousCount: invalidCommands.length,
+                validCount: validCommands.length
+            });
+        }
+        
+        if (validCommands.length === 0) {
+            logger.warn('[commands] No valid commands to execute after filtering');
+            return;
         }
 
-        logger.info(`Executing ${cmds.length} setup commands on instance ${sandboxInstanceId}`);
+        logger.info(`[commands] Executing ${validCommands.length} validated setup commands on instance ${sandboxInstanceId}`);
 
         await this.withTimeout(
-            client.executeCommands(sandboxInstanceId, cmds),
+            client.executeCommands(sandboxInstanceId, validCommands),
             timeoutMs,
             'Command execution timed out'
         );
@@ -257,7 +271,10 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             throw new Error(`Failed to fetch runtime errors: ${resp?.error || 'Unknown error'}`);
         }
 
-        const errors = resp.errors || [];
+        let errors = resp.errors || [];
+
+        // Filter out 'failed to connect to websocket' errors
+        errors = errors.filter(e => e.message !== 'failed to connect to websocket');
             
         if (errors.length > 0) {
             logger.info(`Found ${errors.length} runtime errors: ${errors.map(e => e.message).join(', ')}`);
@@ -459,6 +476,8 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 logger.error(`File writing failed. Error: ${writeResponse?.error}`);
                 throw new Error(`File writing failed. Error: ${writeResponse?.error}`);
             }
+
+            logger.info('Files written to sandbox instance', { instanceId: sandboxInstanceId, files: filesToWrite.map(f => f.filePath) });
         }
 
         // Clear logs if requested
