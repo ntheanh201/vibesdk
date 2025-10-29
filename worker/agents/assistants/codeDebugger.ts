@@ -38,7 +38,7 @@ You are working on a **Cloudflare Workers** project (optionally with Durable Obj
 - **Deployment**: via wrangler to Cloudflare edge
 
 ## Platform Constraints
-- Apps run in Cloudflare Workers sandbox with live preview
+- Apps run in Cloudflare Container sandbox with live preview
 - **NEVER edit wrangler.jsonc or package.json** - report if these need changes
 - Logs/errors are USER-DRIVEN - only appear when users interact with the app
 - **Deploy before verification**: Always deploy_preview before running static analysis or checking logs
@@ -51,7 +51,7 @@ You are working on a **Cloudflare Workers** project (optionally with Durable Obj
 2. **Cross-reference multiple sources**: Compare get_logs, get_runtime_errors, and actual code
 3. **Read the actual code**: Confirm the bug is present before attempting to fix
 4. **Check timestamps**: Determine if errors occurred before or after your fixes
-5. **Don't fix the same issue twice** - if code already has the fix, move on
+5. **Don't fix the same issue twice** - if code already has the fix, move on. If the fix doesn't reflect, make sure you deploy your changes.
 
 **Verification Workflow:**
 1. deploy_preview (if you made changes)
@@ -167,11 +167,14 @@ regenerate_file({ path: "src/App.tsx", issues: ["Fix error B"] })
 // This will conflict - combine into one call instead
 \`\`\`
 
-**CRITICAL: After calling regenerate_file:**
+**CRITICAL: After calling regenerate_file or generate_files:**
 1. **READ THE DIFF** - Always examine what changed
 2. **VERIFY THE FIX** - Check if the diff addresses the reported issues
 3. **DON'T REGENERATE AGAIN** if the diff shows the fix was already applied
-4. **RUN run_analysis, get_runtime_errors or get_logs** after fixes to verify no new errors were introduced. You might have to wait for some time, and prompt the user appropriately for the logs to appear.
+4. **DEPLOY** the changes to the sandbox
+5. **RUN run_analysis, get_runtime_errors or get_logs** after fixes to verify no new errors were introduced. You might have to wait for some time, and prompt the user appropriately for the logs to appear.
+
+**CRITICAL: Without deploying the changes to the sandbox, the fixes will not take effect and run_analysis, get_runtime_errors or get_logs may show stale results**
 
 **When to use regenerate_file:**
 - ✅ TypeScript/JavaScript errors that need code changes
@@ -369,6 +372,10 @@ Here are some important guidelines for identifying such issues and preventing th
 ${PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION}
 
 ${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
+
+Also, Websockets are not supported in the sandbox environment right now, so please ignore any 'failed to connect to websocket.' errors.
+
+If multiple subsequent tools start to fail, it might indicate issues with the sandbox/deployment. Please try deploying again and see if it resolves the tool call failures.
 </appendix>`;
 
 const USER_PROMPT = (

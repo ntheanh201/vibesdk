@@ -40,7 +40,7 @@ export function createDeepDebuggerTool(
 			if (agent.isDeepDebugging()) {
 				logger.warn('Cannot start debugging: Another debug session in progress');
 				return {
-					error: 'DEBUG_IN_PROGRESS: Another debug session is currently running. Use wait_for_debug tool, then retry deep_debug.'
+					error: 'DEBUG_IN_PROGRESS: Another debug session is currently running. Wait for it to finish, and if it doesn\'t, solve the issue, Use wait_for_debug tool, then retry deep_debug.'
 				};
 			}
 
