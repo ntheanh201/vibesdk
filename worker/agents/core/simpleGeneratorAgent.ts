@@ -38,7 +38,7 @@ import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
 import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand, validateAndCleanBootstrapCommands } from '../utils/common';
-import { customizeTemplateFiles, generateBootstrapScript, generateProjectName } from '../utils/templateCustomizer';
+import { customizePackageJson, customizeTemplateFiles, generateBootstrapScript, generateProjectName } from '../utils/templateCustomizer';
 import { generateBlueprint } from '../planning/blueprint';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
@@ -51,6 +51,7 @@ import { DeepCodeDebugger } from '../assistants/codeDebugger';
 import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
 import { generateNanoId } from 'worker/utils/idGenerator';
+import { updatePackageJson } from '../utils/packageSyncer';
 
 interface Operations {
     codeReview: CodeReviewOperation;
@@ -329,6 +330,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info(`Agent ${this.getAgentId()} starting in READ-ONLY mode - skipping expensive initialization`);
             return;
         }
+
+        // migrate overwritten package.jsons
+        const oldPackageJson = this.fileManager.getFile('package.json')?.fileContents || this.state.lastPackageJson;
+        if (oldPackageJson) {
+            const packageJson = customizePackageJson(oldPackageJson, this.state.projectName);
+            this.fileManager.saveGeneratedFiles([
+                {
+                    filePath: 'package.json',
+                    fileContents: packageJson,
+                    filePurpose: 'Project configuration file'
+                }
+            ], 'chore: fix overwritten package.json');
+        }
         
         // Full initialization for read-write operations
         await this.gitInit();
@@ -455,7 +469,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 fileContents: bootstrapScript,
                 filePurpose: 'Updated bootstrap script for first-time clone setup'
             },
-            'Update bootstrap script with latest commands'
+            'chore: Update bootstrap script with latest commands'
         );
         
         this.logger().info('Updated bootstrap script with validated commands', {
@@ -2226,22 +2240,22 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             }
             const packageJsonContent = results.files[0].content;
 
-            // Check if package.json has changed
-            if (packageJsonContent === this.state.lastPackageJson) {
+            const { updated, packageJson } = updatePackageJson(this.state.lastPackageJson, packageJsonContent);
+            if (!updated) {
                 this.logger().info('package.json has not changed, skipping sync');
                 return;
             }
             // Update state with latest package.json
             this.setState({
                 ...this.state,
-                lastPackageJson: packageJsonContent
+                lastPackageJson: packageJson
             });
             
             // Commit to git repository
             const fileState = await this.fileManager.saveGeneratedFile(
                 {
                     filePath: 'package.json',
-                    fileContents: packageJsonContent,
+                    fileContents: packageJson,
                     filePurpose: 'Project dependencies and configuration'
                 },
                 'chore: sync package.json dependencies from sandbox'
