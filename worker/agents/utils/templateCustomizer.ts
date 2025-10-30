@@ -58,7 +58,7 @@ export function customizeTemplateFiles(
 /**
  * Update package.json with project name and prepare script
  */
-function customizePackageJson(content: string, projectName: string): string {
+export function customizePackageJson(content: string, projectName: string): string {
     const pkg = JSON.parse(content);
     pkg.name = projectName;
     pkg.scripts = pkg.scripts || {};
