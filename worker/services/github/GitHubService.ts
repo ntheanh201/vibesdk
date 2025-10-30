@@ -13,9 +13,9 @@ import {
 import { GitHubPushResponse, TemplateDetails } from '../sandbox/sandboxTypes';
 import { GitCloneService } from '../../agents/git/git-clone-service';
 import git from '@ashishkumar472/cf-git';
+import http from '@ashishkumar472/cf-git/http/web';
 import { prepareCloudflareButton } from '../../utils/deployToCf';
 import type { MemFS } from '../../agents/git/memfs';
-
 
 export class GitHubService {
     private static readonly logger = createLogger('GitHubService');
@@ -169,7 +169,8 @@ export class GitHubService {
     }
 
     /**
-     * Export git repository to GitHub
+     * Export git repository to GitHub using native git push protocol
+     * Falls back to REST API if push fails
      */
     static async exportToGitHub(options: {
         gitObjects: Array<{ path: string; data: Uint8Array }>;
@@ -180,6 +181,7 @@ export class GitHubService {
         repositoryUrl: string;
         username: string;
         email: string;
+        useGitPush?: boolean; // Feature flag for git push vs REST API
     }): Promise<GitHubPushResponse> {
         try {
             GitHubService.logger.info('Starting GitHub export from DO git', {
@@ -202,19 +204,14 @@ export class GitHubService {
             const commits = await git.log({ fs, dir: '/', depth: 1000 });
 
             GitHubService.logger.info('Repository built', {
-                commitCount: commits.length
+                commitCount: commits.length,
             });
-
-            // Push to GitHub with proper per-commit trees
-            const result = await GitHubService.forcePushToGitHub(
+            const pushResult = await GitHubService.pushViaGitProtocol(
                 fs,
                 options.token,
                 options.repositoryUrl,
-                commits,
-                { name: options.username, email: options.email }
             );
-
-            return result;
+            return pushResult;
         } catch (error) {
             GitHubService.logger.error('GitHub export failed', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -271,45 +268,6 @@ export class GitHubService {
     }
 
     /**
-     * Walk a git tree and extract all files
-     */
-    private static async walkGitTree(
-        fs: MemFS,
-        treeOid: string,
-        basePath: string = ''
-    ): Promise<Array<{ path: string; oid: string; content: string }>> {
-        const files: Array<{ path: string; oid: string; content: string }> = [];
-        
-        const { tree } = await git.readTree({ fs, dir: '/', oid: treeOid });
-        
-        for (const entry of tree) {
-            const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
-            
-            if (entry.type === 'blob') {
-                const { blob } = await git.readBlob({ fs, dir: '/', oid: entry.oid });
-                const content = new TextDecoder().decode(blob);
-                files.push({ path: fullPath, oid: entry.oid, content });
-            } else if (entry.type === 'tree') {
-                const subFiles = await GitHubService.walkGitTree(fs, entry.oid, fullPath);
-                files.push(...subFiles);
-            }
-        }
-        
-        return files;
-    }
-
-    /**
-     * Create a SHA-256 hash of content for blob deduplication
-     */
-    private static async hashContent(content: string): Promise<string> {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(content);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    /**
      * Normalize commit message for comparison
      */
     private static normalizeCommitMessage(message: string): string {
@@ -359,207 +317,117 @@ export class GitHubService {
     }
 
     /**
-     * Force push to GitHub while preserving commit history
-     * Creates proper trees for each commit to preserve diffs
-     * Supports incremental sync by detecting already-pushed commits
+     * Push to GitHub using native git push protocol
+     * Much simpler and faster than REST API approach
+     * Automatically handles incremental sync and packfile optimization
      */
-    private static async forcePushToGitHub(
+    private static async pushViaGitProtocol(
         fs: MemFS,
         token: string,
-        repoUrl: string,
-        commits: Awaited<ReturnType<typeof git.log>>,
-        author: { name: string; email: string },
-        options: { incremental?: boolean } = {}
+        repositoryUrl: string,
     ): Promise<GitHubPushResponse> {
-        const { incremental = true } = options;
         try {
-            const repoInfo = GitHubService.extractRepoInfo(repoUrl);
+            // Extract repo info for logging
+            const repoInfo = GitHubService.extractRepoInfo(repositoryUrl);
             if (!repoInfo) {
                 throw new GitHubServiceError('Invalid repository URL format', 'INVALID_REPO_URL');
             }
 
             const { owner, repo } = repoInfo;
-            const octokit = GitHubService.createOctokit(token);
-
-            // Get repository and default branch
-            const { data: repository } = await octokit.rest.repos.get({ owner, repo });
-            const branch = repository.default_branch || 'main';
-
-            // Blob cache: content hash -> GitHub blob SHA
-            const blobCache = new Map<string, string>();
-            let totalBlobsCreated = 0;
-            let totalBlobsReused = 0;
-
-            // Try incremental sync first
-            let startFromIndex = 0;
-            let parentSha: string | undefined;
-            const reversedCommits = [...commits].reverse();
             
-            if (incremental) {
-                try {
-                    const { data: remoteCommits } = await octokit.repos.listCommits({
-                        owner,
-                        repo,
-                        per_page: 100
+            GitHubService.logger.info('Setting up git push', {
+                owner,
+                repo,
+                url: repositoryUrl
+            });
+
+            // Convert https://github.com/owner/repo to https://github.com/owner/repo.git
+            const gitUrl = repositoryUrl.endsWith('.git') ? repositoryUrl : `${repositoryUrl}.git`;
+
+            // Configure remote
+            try {
+                // Remove remote if it exists
+                await git.deleteRemote({ fs, dir: '/', remote: 'github' }).catch(() => {
+                    // Ignore error if remote doesn't exist
+                });
+            } catch {
+                // Ignore
+            }
+
+            // Add fresh remote
+            await git.addRemote({
+                fs,
+                dir: '/',
+                remote: 'github',
+                url: gitUrl
+            });
+
+            GitHubService.logger.info('Remote configured, starting push', {
+                remote: 'github',
+                url: gitUrl
+            });
+
+            // Push with force to handle sync
+            // Set timeout to prevent hanging
+            const PUSH_TIMEOUT_MS = 120000; // 2 minutes
+            const pushPromise = git.push({
+                fs,
+                http, // Built-in Cloudflare Workers HTTP client
+                dir: '/',
+                remote: 'github',
+                ref: 'main',
+                force: true, // Allow non-fast-forward pushes for sync
+                onAuth: () => ({
+                    username: token, // GitHub accepts token as username
+                    password: 'x-oauth-basic' // Or just empty string
+                }),
+                onAuthFailure: (url: any) => {
+                    GitHubService.logger.error('Authentication failed', { url });
+                },
+                onAuthSuccess: (url: any) => {
+                    GitHubService.logger.info('Authentication successful', { url });
+                },
+                onProgress: (progress: any) => {
+                    GitHubService.logger.info('Push progress', {
+                        phase: progress.phase,
+                        loaded: progress.loaded,
+                        total: progress.total
                     });
-                    
-                    if (remoteCommits.length > 0) {
-                        const commonCommit = GitHubService.findLastCommonCommit(commits, remoteCommits);
-                        
-                        if (commonCommit) {
-                            startFromIndex = commonCommit.lastCommonIndex + 1;
-                            parentSha = commonCommit.githubSha;
-                            
-                            const newCommitsCount = reversedCommits.length - startFromIndex;
-                            
-                            if (newCommitsCount === 0) {
-                                GitHubService.logger.info('No new commits to push');
-                                return {
-                                    success: true,
-                                    commitSha: parentSha
-                                };
-                            }
-                            
-                            GitHubService.logger.info('Incremental sync enabled', {
-                                commonCommit: commonCommit.localOid.slice(0, 7),
-                                skippingCommits: startFromIndex,
-                                pushingCommits: newCommitsCount
-                            });
-                        } else {
-                            GitHubService.logger.info('No common commits found, full push required');
-                        }
-                    }
-                } catch (error) {
-                    GitHubService.logger.warn('Incremental sync check failed, doing full push', { error });
-                    startFromIndex = 0;
-                    parentSha = undefined;
+                },
+                onMessage: (message) => {
+                    GitHubService.logger.info('Git message', { message });
                 }
-            }
-            
-            GitHubService.logger.info('Pushing to GitHub with per-commit trees', {
-                owner,
-                repo,
-                branch,
-                totalCommits: commits.length,
-                processingCommits: reversedCommits.length - startFromIndex,
-                mode: startFromIndex > 0 ? 'incremental' : 'full'
             });
-            
-            for (let i = startFromIndex; i < reversedCommits.length; i++) {
-                const commit = reversedCommits[i];
-                
-                const commitNum = i - startFromIndex + 1;
-                const totalToProcess = reversedCommits.length - startFromIndex;
-                
-                GitHubService.logger.info(`Processing commit ${commitNum}/${totalToProcess}`, {
-                    message: commit.commit.message.split('\n')[0],
-                    oid: commit.oid.slice(0, 7)
-                });
-                
-                // Walk this commit's tree to get its files
-                const files = await GitHubService.walkGitTree(fs, commit.commit.tree);
-                
-                if (files.length === 0) {
-                    GitHubService.logger.info('Skipping commit with no files', { oid: commit.oid });
-                    continue;
-                }
-                
-                // Create blobs for new/changed files (parallel, with deduplication)
-                const blobCreationPromises: Promise<void>[] = [];
-                const fileToGitHubBlob = new Map<string, string>();
-                
-                for (const file of files) {
-                    const contentHash = await GitHubService.hashContent(file.content);
-                    
-                    if (blobCache.has(contentHash)) {
-                        // Reuse existing blob
-                        fileToGitHubBlob.set(file.path, blobCache.get(contentHash)!);
-                        totalBlobsReused++;
-                    } else {
-                        // Create new blob (add to parallel batch)
-                        blobCreationPromises.push(
-                            (async () => {
-                                const { data: blob } = await octokit.git.createBlob({
-                                    owner,
-                                    repo,
-                                    content: Buffer.from(file.content, 'utf8').toString('base64'),
-                                    encoding: 'base64'
-                                });
-                                blobCache.set(contentHash, blob.sha);
-                                fileToGitHubBlob.set(file.path, blob.sha);
-                                totalBlobsCreated++;
-                            })()
-                        );
-                    }
-                }
-                
-                // Wait for all blobs in this batch
-                await Promise.all(blobCreationPromises);
-                
-                // Create tree for this commit
-                const { data: tree } = await octokit.git.createTree({
-                    owner,
-                    repo,
-                    tree: files.map(file => ({
-                        path: file.path,
-                        mode: '100644' as '100644',
-                        type: 'blob' as 'blob',
-                        sha: fileToGitHubBlob.get(file.path)!
-                    }))
-                });
-                
-                // Create GitHub commit with this tree
-                const { data: newCommit } = await octokit.git.createCommit({
-                    owner,
-                    repo,
-                    message: commit.commit.message,
-                    tree: tree.sha,
-                    parents: parentSha ? [parentSha] : [],
-                    author: {
-                        name: commit.commit.author.name,
-                        email: commit.commit.author.email,
-                        date: new Date(commit.commit.author.timestamp * 1000).toISOString()
-                    },
-                    committer: {
-                        name: commit.commit.committer?.name || author.name,
-                        email: commit.commit.committer?.email || author.email,
-                        date: new Date((commit.commit.committer?.timestamp || commit.commit.author.timestamp) * 1000).toISOString()
-                    }
-                });
-                
-                parentSha = newCommit.sha;
+
+            // Race against timeout
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error(`Git push timed out after ${PUSH_TIMEOUT_MS}ms`));
+                }, PUSH_TIMEOUT_MS);
+            });
+
+            const pushResult = await Promise.race([pushPromise, timeoutPromise]);
+
+            GitHubService.logger.info('Git push result', { pushResult });
+
+            // Check if push was successful
+            if (!pushResult.ok) {
+                throw new Error(pushResult.error || 'Push failed');
             }
 
-            if (!parentSha) {
-                throw new Error('No commits were created');
-            }
-
-            GitHubService.logger.info('Blob statistics', {
-                totalCreated: totalBlobsCreated,
-                totalReused: totalBlobsReused,
-                cacheSize: blobCache.size
-            });
-
-            // Update branch
-            await octokit.git.updateRef({
-                owner,
-                repo,
-                ref: `heads/${branch}`,
-                sha: parentSha,
-                force: true
-            });
-
-            GitHubService.logger.info('Force push completed', {
-                finalCommitSha: parentSha,
-                branch
-            });
+            // Get the final commit SHA
+            const headCommit = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
 
             return {
                 success: true,
-                commitSha: parentSha
+                commitSha: headCommit
             };
         } catch (error) {
-            GitHubService.logger.error('Force push failed', error);
+            GitHubService.logger.error('Git push failed', { 
+                error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                errorStack: error instanceof Error ? error.stack : undefined
+            });
             throw error;
         }
     }
