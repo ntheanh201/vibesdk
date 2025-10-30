@@ -198,21 +198,19 @@ export class GitHubService {
             // Modify README to add GitHub deploy button
             await GitHubService.modifyReadmeForGitHub(fs, options.repositoryUrl);
 
-            // Get all commits and files from built repo
+            // Get all commits from built repo
             const commits = await git.log({ fs, dir: '/', depth: 1000 });
-            const files = await GitHubService.getAllFilesFromRepo(fs);
 
             GitHubService.logger.info('Repository built', {
-                commitCount: commits.length,
-                fileCount: files.length
+                commitCount: commits.length
             });
 
-            // Push to GitHub with force
+            // Push to GitHub with proper per-commit trees
             const result = await GitHubService.forcePushToGitHub(
+                fs,
                 options.token,
                 options.repositoryUrl,
                 commits,
-                files,
                 { name: options.username, email: options.email }
             );
 
@@ -273,46 +271,53 @@ export class GitHubService {
     }
 
     /**
-     * Recursively get all files from repository
+     * Walk a git tree and extract all files
      */
-    private static async getAllFilesFromRepo(fs: MemFS): Promise<Array<{ path: string; content: string }>> {
-        const files: Array<{ path: string; content: string }> = [];
+    private static async walkGitTree(
+        fs: MemFS,
+        treeOid: string,
+        basePath: string = ''
+    ): Promise<Array<{ path: string; oid: string; content: string }>> {
+        const files: Array<{ path: string; oid: string; content: string }> = [];
         
-        const walkDir = async (dir: string) => {
-            const entries = await fs.readdir(dir);
+        const { tree } = await git.readTree({ fs, dir: '/', oid: treeOid });
+        
+        for (const entry of tree) {
+            const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
             
-            for (const entry of entries) {
-                const fullPath = dir === '/' ? `/${entry}` : `${dir}/${entry}`;
-                
-                // Skip .git
-                if (fullPath === '/.git') continue;
-                
-                const stat = await fs.lstat(fullPath);
-                
-                if (stat.type === 'dir') {
-                    await walkDir(fullPath);
-                } else if (stat.type === 'file') {
-                    const contentRaw = await fs.readFile(fullPath, { encoding: 'utf8' });
-                    const content = typeof contentRaw === 'string' ? contentRaw : new TextDecoder().decode(contentRaw);
-                    // Strip leading slash
-                    const relativePath = fullPath.slice(1);
-                    files.push({ path: relativePath, content });
-                }
+            if (entry.type === 'blob') {
+                const { blob } = await git.readBlob({ fs, dir: '/', oid: entry.oid });
+                const content = new TextDecoder().decode(blob);
+                files.push({ path: fullPath, oid: entry.oid, content });
+            } else if (entry.type === 'tree') {
+                const subFiles = await GitHubService.walkGitTree(fs, entry.oid, fullPath);
+                files.push(...subFiles);
             }
-        };
+        }
         
-        await walkDir('/');
         return files;
     }
 
     /**
+     * Create a SHA-256 hash of content for blob deduplication
+     */
+    private static async hashContent(content: string): Promise<string> {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(content);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
      * Force push to GitHub while preserving commit history
+     * Creates proper trees for each commit to preserve diffs
      */
     private static async forcePushToGitHub(
+        fs: MemFS,
         token: string,
         repoUrl: string,
         commits: Awaited<ReturnType<typeof git.log>>,
-        files: Array<{ path: string; content: string }>,
         author: { name: string; email: string }
     ): Promise<GitHubPushResponse> {
         try {
@@ -328,46 +333,83 @@ export class GitHubService {
             const { data: repository } = await octokit.rest.repos.get({ owner, repo });
             const branch = repository.default_branch || 'main';
 
-            GitHubService.logger.info('Pushing to GitHub', {
+            GitHubService.logger.info('Pushing to GitHub with per-commit trees', {
                 owner,
                 repo,
                 branch,
-                commitCount: commits.length,
-                fileCount: files.length
+                commitCount: commits.length
             });
 
-            // Create file blobs
-            const blobPromises = files.map(file =>
-                octokit.git.createBlob({
-                    owner,
-                    repo,
-                    content: Buffer.from(file.content, 'utf8').toString('base64'),
-                    encoding: 'base64'
-                })
-            );
-            const blobs = await Promise.all(blobPromises);
+            // Blob cache: content hash -> GitHub blob SHA
+            const blobCache = new Map<string, string>();
+            let totalBlobsCreated = 0;
+            let totalBlobsReused = 0;
 
-            GitHubService.logger.info('Blobs created', { blobCount: blobs.length });
-
-            // Create tree
-            const { data: tree } = await octokit.git.createTree({
-                owner,
-                repo,
-                tree: files.map((file, i) => ({
-                    path: file.path,
-                    mode: '100644' as '100644',
-                    type: 'blob' as 'blob',
-                    sha: blobs[i].data.sha
-                }))
-            });
-
-            GitHubService.logger.info('Tree created', { treeSha: tree.sha });
-
-            // Replay commits in order
+            // Process commits from oldest to newest
             let parentSha: string | undefined;
             const reversedCommits = [...commits].reverse();
             
-            for (const commit of reversedCommits) {
+            for (let i = 0; i < reversedCommits.length; i++) {
+                const commit = reversedCommits[i];
+                
+                GitHubService.logger.info(`Processing commit ${i + 1}/${reversedCommits.length}`, {
+                    message: commit.commit.message.split('\n')[0],
+                    oid: commit.oid
+                });
+                
+                // Walk this commit's tree to get its files
+                const files = await GitHubService.walkGitTree(fs, commit.commit.tree);
+                
+                if (files.length === 0) {
+                    GitHubService.logger.info('Skipping commit with no files', { oid: commit.oid });
+                    continue;
+                }
+                
+                // Create blobs for new/changed files (parallel, with deduplication)
+                const blobCreationPromises: Promise<void>[] = [];
+                const fileToGitHubBlob = new Map<string, string>();
+                
+                for (const file of files) {
+                    const contentHash = await GitHubService.hashContent(file.content);
+                    
+                    if (blobCache.has(contentHash)) {
+                        // Reuse existing blob
+                        fileToGitHubBlob.set(file.path, blobCache.get(contentHash)!);
+                        totalBlobsReused++;
+                    } else {
+                        // Create new blob (add to parallel batch)
+                        blobCreationPromises.push(
+                            (async () => {
+                                const { data: blob } = await octokit.git.createBlob({
+                                    owner,
+                                    repo,
+                                    content: Buffer.from(file.content, 'utf8').toString('base64'),
+                                    encoding: 'base64'
+                                });
+                                blobCache.set(contentHash, blob.sha);
+                                fileToGitHubBlob.set(file.path, blob.sha);
+                                totalBlobsCreated++;
+                            })()
+                        );
+                    }
+                }
+                
+                // Wait for all blobs in this batch
+                await Promise.all(blobCreationPromises);
+                
+                // Create tree for this commit
+                const { data: tree } = await octokit.git.createTree({
+                    owner,
+                    repo,
+                    tree: files.map(file => ({
+                        path: file.path,
+                        mode: '100644' as '100644',
+                        type: 'blob' as 'blob',
+                        sha: fileToGitHubBlob.get(file.path)!
+                    }))
+                });
+                
+                // Create GitHub commit with this tree
                 const { data: newCommit } = await octokit.git.createCommit({
                     owner,
                     repo,
@@ -385,12 +427,19 @@ export class GitHubService {
                         date: new Date((commit.commit.committer?.timestamp || commit.commit.author.timestamp) * 1000).toISOString()
                     }
                 });
+                
                 parentSha = newCommit.sha;
             }
 
             if (!parentSha) {
                 throw new Error('No commits were created');
             }
+
+            GitHubService.logger.info('Blob statistics', {
+                totalCreated: totalBlobsCreated,
+                totalReused: totalBlobsReused,
+                cacheSize: blobCache.size
+            });
 
             // Update branch
             await octokit.git.updateRef({
