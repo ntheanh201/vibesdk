@@ -51,16 +51,35 @@ export class GitHubExporterController extends BaseController {
             let repositoryUrl: string;
             let cloneUrl: string;
             
+            // Check database for existing repository if not provided
+            let finalExistingRepoUrl = existingRepositoryUrl;
+            if (!finalExistingRepoUrl) {
+                try {
+                    const appService = new AppService(env);
+                    const app = await appService.getAppDetails(agentId);
+                    finalExistingRepoUrl = app?.githubRepositoryUrl || undefined;
+                    
+                    if (finalExistingRepoUrl) {
+                        this.logger.info('Found existing GitHub repository in database', { 
+                            agentId, 
+                            repositoryUrl: finalExistingRepoUrl 
+                        });
+                    }
+                } catch (error) {
+                    this.logger.warn('Failed to check for existing repository', { error, agentId });
+                }
+            }
+            
             // Determine repository details (sync to existing or create new)
-            if (existingRepositoryUrl) {
-                this.logger.info('Syncing to existing repository', { agentId, repositoryUrl: existingRepositoryUrl });
+            if (finalExistingRepoUrl) {
+                this.logger.info('Syncing to existing repository', { agentId, repositoryUrl: finalExistingRepoUrl });
                 
-                repositoryUrl = existingRepositoryUrl;
+                repositoryUrl = finalExistingRepoUrl;
                 
                 // GitHub clone URL is simply the html_url + .git
-                cloneUrl = existingRepositoryUrl.endsWith('.git') 
-                    ? existingRepositoryUrl 
-                    : `${existingRepositoryUrl}.git`;
+                cloneUrl = finalExistingRepoUrl.endsWith('.git') 
+                    ? finalExistingRepoUrl 
+                    : `${finalExistingRepoUrl}.git`;
                 
                 this.logger.info('Using existing repository URLs', { repositoryUrl, cloneUrl });
             } else {
@@ -127,11 +146,11 @@ export class GitHubExporterController extends BaseController {
             if (!pushResult?.success) {
                 return { 
                     success: false, 
-                    error: pushResult?.error || (existingRepositoryUrl ? 'Sync failed' : 'File push failed')
+                    error: pushResult?.error || (finalExistingRepoUrl ? 'Sync failed' : 'File push failed')
                 };
             }
 
-            const operationType = existingRepositoryUrl ? 'Sync' : 'Export';
+            const operationType = finalExistingRepoUrl ? 'Sync' : 'Export';
             this.logger.info(`${operationType} completed`, { agentId, repositoryUrl });
             
             return { success: true, repositoryUrl };
@@ -289,23 +308,6 @@ export class GitHubExporterController extends BaseController {
             if (cachedToken) {
                 this.logger.info('Using cached token', { agentId: body.agentId, username: cachedToken.username });
                 
-                // Check if app already has a GitHub repository URL
-                let existingRepoUrl: string | null = null;
-                try {
-                    const appService = new AppService(env);
-                    const app = await appService.getAppDetails(body.agentId);
-                    existingRepoUrl = app?.githubRepositoryUrl || null;
-                    
-                    if (existingRepoUrl) {
-                        this.logger.info('Found existing GitHub repository', { 
-                            agentId: body.agentId, 
-                            repositoryUrl: existingRepoUrl 
-                        });
-                    }
-                } catch (error) {
-                    this.logger.warn('Failed to check for existing repository', { error, agentId: body.agentId });
-                }
-                
                 const result = await this.createRepositoryAndPush({
                     env,
                     agentId: body.agentId,
@@ -313,8 +315,7 @@ export class GitHubExporterController extends BaseController {
                     description: body.description,
                     isPrivate: body.isPrivate ?? false,
                     token: cachedToken.token,
-                    username: cachedToken.username,
-                    existingRepositoryUrl: existingRepoUrl || undefined
+                    username: cachedToken.username
                 });
                 
                 if (result.success) {
