@@ -48,8 +48,8 @@ export class GitHubExporterController extends BaseController {
         const { env, agentId, repositoryName, description, isPrivate, token, username, existingRepositoryUrl } = options;
         
         try {
-            let repositoryUrl: string;
-            let cloneUrl: string;
+            let repositoryUrl: string | undefined;
+            let cloneUrl: string | undefined;
             
             // Check database for existing repository if not provided
             let finalExistingRepoUrl = existingRepositoryUrl;
@@ -72,17 +72,39 @@ export class GitHubExporterController extends BaseController {
             
             // Determine repository details (sync to existing or create new)
             if (finalExistingRepoUrl) {
-                this.logger.info('Syncing to existing repository', { agentId, repositoryUrl: finalExistingRepoUrl });
+                // Check if repository still exists on GitHub
+                const exists = await GitHubService.repositoryExists({
+                    repositoryUrl: finalExistingRepoUrl,
+                    token
+                });
                 
-                repositoryUrl = finalExistingRepoUrl;
-                
-                // GitHub clone URL is simply the html_url + .git
-                cloneUrl = finalExistingRepoUrl.endsWith('.git') 
-                    ? finalExistingRepoUrl 
-                    : `${finalExistingRepoUrl}.git`;
-                
-                this.logger.info('Using existing repository URLs', { repositoryUrl, cloneUrl });
-            } else {
+                if (!exists) {
+                    // Repository doesn't exist - clear from database and create new
+                    this.logger.info('Repository no longer exists, creating new one', {
+                        agentId,
+                        oldUrl: finalExistingRepoUrl,
+                        repositoryName
+                    });
+                    
+                    try {
+                        const appService = new AppService(env);
+                        await appService.updateGitHubRepository(agentId, '', 'public');
+                    } catch (clearError) {
+                        this.logger.warn('Failed to clear repository URL', { error: clearError, agentId });
+                    }
+                    
+                    // Create new repository
+                    finalExistingRepoUrl = undefined;
+                } else {
+                    // Repository exists, use it
+                    repositoryUrl = finalExistingRepoUrl;
+                    cloneUrl = finalExistingRepoUrl.endsWith('.git') 
+                        ? finalExistingRepoUrl 
+                        : `${finalExistingRepoUrl}.git`;
+                }
+            }
+            
+            if (!finalExistingRepoUrl) {
                 this.logger.info('Creating new repository', { agentId, repositoryName });
                 
                 const createResult = await GitHubService.createUserRepository({
@@ -128,6 +150,14 @@ export class GitHubExporterController extends BaseController {
                 cloneUrl = repository.clone_url;
                 
                 this.logger.info('Repository created', { agentId, repositoryUrl });
+            }
+
+            // Ensure repository URLs are set
+            if (!repositoryUrl || !cloneUrl) {
+                return { 
+                    success: false, 
+                    error: 'Failed to determine repository URLs' 
+                };
             }
 
             // Push files to repository

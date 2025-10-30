@@ -141,6 +141,36 @@ export class GitHubService {
     }
 
     /**
+     * Check if repository exists on GitHub
+     */
+    static async repositoryExists(options: {
+        repositoryUrl: string;
+        token: string;
+    }): Promise<boolean> {
+        const repoInfo = GitHubService.extractRepoInfo(options.repositoryUrl);
+        
+        if (!repoInfo) {
+            return false;
+        }
+
+        try {
+            const octokit = GitHubService.createOctokit(options.token);
+            await octokit.repos.get({
+                owner: repoInfo.owner,
+                repo: repoInfo.repo
+            });
+            
+            return true;
+        } catch (error) {
+            GitHubService.logger.error('Repository existence check failed', {
+                repositoryUrl: options.repositoryUrl,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            });
+            return false;
+        }
+    }
+
+    /**
      * Parse owner and repo name from GitHub URL
      */
     static extractRepoInfo(url: string): { owner: string; repo: string } | null {
