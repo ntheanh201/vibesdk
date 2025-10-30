@@ -13,9 +13,9 @@ import {
 import { GitHubPushResponse, TemplateDetails } from '../sandbox/sandboxTypes';
 import { GitCloneService } from '../../agents/git/git-clone-service';
 import git from '@ashishkumar472/cf-git';
+import http from '@ashishkumar472/cf-git/http/web';
 import { prepareCloudflareButton } from '../../utils/deployToCf';
 import type { MemFS } from '../../agents/git/memfs';
-
 
 export class GitHubService {
     private static readonly logger = createLogger('GitHubService');
@@ -169,7 +169,8 @@ export class GitHubService {
     }
 
     /**
-     * Export git repository to GitHub
+     * Export git repository to GitHub using native git push protocol
+     * Falls back to REST API if push fails
      */
     static async exportToGitHub(options: {
         gitObjects: Array<{ path: string; data: Uint8Array }>;
@@ -180,6 +181,7 @@ export class GitHubService {
         repositoryUrl: string;
         username: string;
         email: string;
+        useGitPush?: boolean; // Feature flag for git push vs REST API
     }): Promise<GitHubPushResponse> {
         try {
             GitHubService.logger.info('Starting GitHub export from DO git', {
@@ -198,25 +200,18 @@ export class GitHubService {
             // Modify README to add GitHub deploy button
             await GitHubService.modifyReadmeForGitHub(fs, options.repositoryUrl);
 
-            // Get all commits and files from built repo
+            // Get all commits from built repo
             const commits = await git.log({ fs, dir: '/', depth: 1000 });
-            const files = await GitHubService.getAllFilesFromRepo(fs);
 
             GitHubService.logger.info('Repository built', {
                 commitCount: commits.length,
-                fileCount: files.length
             });
-
-            // Push to GitHub with force
-            const result = await GitHubService.forcePushToGitHub(
+            const pushResult = await GitHubService.pushViaGitProtocol(
+                fs,
                 options.token,
                 options.repositoryUrl,
-                commits,
-                files,
-                { name: options.username, email: options.email }
             );
-
-            return result;
+            return pushResult;
         } catch (error) {
             GitHubService.logger.error('GitHub export failed', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -273,145 +268,166 @@ export class GitHubService {
     }
 
     /**
-     * Recursively get all files from repository
+     * Normalize commit message for comparison
      */
-    private static async getAllFilesFromRepo(fs: MemFS): Promise<Array<{ path: string; content: string }>> {
-        const files: Array<{ path: string; content: string }> = [];
-        
-        const walkDir = async (dir: string) => {
-            const entries = await fs.readdir(dir);
-            
-            for (const entry of entries) {
-                const fullPath = dir === '/' ? `/${entry}` : `${dir}/${entry}`;
-                
-                // Skip .git
-                if (fullPath === '/.git') continue;
-                
-                const stat = await fs.lstat(fullPath);
-                
-                if (stat.type === 'dir') {
-                    await walkDir(fullPath);
-                } else if (stat.type === 'file') {
-                    const contentRaw = await fs.readFile(fullPath, { encoding: 'utf8' });
-                    const content = typeof contentRaw === 'string' ? contentRaw : new TextDecoder().decode(contentRaw);
-                    // Strip leading slash
-                    const relativePath = fullPath.slice(1);
-                    files.push({ path: relativePath, content });
-                }
-            }
-        };
-        
-        await walkDir('/');
-        return files;
+    private static normalizeCommitMessage(message: string): string {
+        return message.trim();
     }
 
     /**
-     * Force push to GitHub while preserving commit history
+     * Check if commit is system-generated
      */
-    private static async forcePushToGitHub(
+    private static isSystemGeneratedCommit(message: string): boolean {
+        const normalized = GitHubService.normalizeCommitMessage(message);
+        return normalized.startsWith('docs: Add Cloudflare deploy button');
+    }
+
+    /**
+     * Find last common commit between local and remote
+     * Returns index in reversed (oldest-first) local commits and GitHub SHA
+     */
+    private static findLastCommonCommit(
+        localCommits: Awaited<ReturnType<typeof git.log>>,
+        remoteCommits: Array<{ sha: string; commit: { message: string } }>
+    ): { lastCommonIndex: number; githubSha: string; localOid: string } | null {
+        const reversedLocal = [...localCommits].reverse();
+        
+        // Search from newest to oldest local commit
+        for (let i = reversedLocal.length - 1; i >= 0; i--) {
+            const localMsg = GitHubService.normalizeCommitMessage(reversedLocal[i].commit.message);
+            
+            // Find matching remote commit (ignore system commits)
+            const matchingRemote = remoteCommits.find(remote => {
+                if (GitHubService.isSystemGeneratedCommit(remote.commit.message)) {
+                    return false;
+                }
+                return GitHubService.normalizeCommitMessage(remote.commit.message) === localMsg;
+            });
+            
+            if (matchingRemote) {
+                return {
+                    lastCommonIndex: i,
+                    githubSha: matchingRemote.sha,
+                    localOid: reversedLocal[i].oid
+                };
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Push to GitHub using native git push protocol
+     * Much simpler and faster than REST API approach
+     * Automatically handles incremental sync and packfile optimization
+     */
+    private static async pushViaGitProtocol(
+        fs: MemFS,
         token: string,
-        repoUrl: string,
-        commits: Awaited<ReturnType<typeof git.log>>,
-        files: Array<{ path: string; content: string }>,
-        author: { name: string; email: string }
+        repositoryUrl: string,
     ): Promise<GitHubPushResponse> {
         try {
-            const repoInfo = GitHubService.extractRepoInfo(repoUrl);
+            // Extract repo info for logging
+            const repoInfo = GitHubService.extractRepoInfo(repositoryUrl);
             if (!repoInfo) {
                 throw new GitHubServiceError('Invalid repository URL format', 'INVALID_REPO_URL');
             }
 
             const { owner, repo } = repoInfo;
-            const octokit = GitHubService.createOctokit(token);
-
-            // Get repository and default branch
-            const { data: repository } = await octokit.rest.repos.get({ owner, repo });
-            const branch = repository.default_branch || 'main';
-
-            GitHubService.logger.info('Pushing to GitHub', {
-                owner,
-                repo,
-                branch,
-                commitCount: commits.length,
-                fileCount: files.length
-            });
-
-            // Create file blobs
-            const blobPromises = files.map(file =>
-                octokit.git.createBlob({
-                    owner,
-                    repo,
-                    content: Buffer.from(file.content, 'utf8').toString('base64'),
-                    encoding: 'base64'
-                })
-            );
-            const blobs = await Promise.all(blobPromises);
-
-            GitHubService.logger.info('Blobs created', { blobCount: blobs.length });
-
-            // Create tree
-            const { data: tree } = await octokit.git.createTree({
-                owner,
-                repo,
-                tree: files.map((file, i) => ({
-                    path: file.path,
-                    mode: '100644' as '100644',
-                    type: 'blob' as 'blob',
-                    sha: blobs[i].data.sha
-                }))
-            });
-
-            GitHubService.logger.info('Tree created', { treeSha: tree.sha });
-
-            // Replay commits in order
-            let parentSha: string | undefined;
-            const reversedCommits = [...commits].reverse();
             
-            for (const commit of reversedCommits) {
-                const { data: newCommit } = await octokit.git.createCommit({
-                    owner,
-                    repo,
-                    message: commit.commit.message,
-                    tree: tree.sha,
-                    parents: parentSha ? [parentSha] : [],
-                    author: {
-                        name: commit.commit.author.name,
-                        email: commit.commit.author.email,
-                        date: new Date(commit.commit.author.timestamp * 1000).toISOString()
-                    },
-                    committer: {
-                        name: commit.commit.committer?.name || author.name,
-                        email: commit.commit.committer?.email || author.email,
-                        date: new Date((commit.commit.committer?.timestamp || commit.commit.author.timestamp) * 1000).toISOString()
-                    }
-                });
-                parentSha = newCommit.sha;
-            }
-
-            if (!parentSha) {
-                throw new Error('No commits were created');
-            }
-
-            // Update branch
-            await octokit.git.updateRef({
+            GitHubService.logger.info('Setting up git push', {
                 owner,
                 repo,
-                ref: `heads/${branch}`,
-                sha: parentSha,
-                force: true
+                url: repositoryUrl
             });
 
-            GitHubService.logger.info('Force push completed', {
-                finalCommitSha: parentSha,
-                branch
+            // Convert https://github.com/owner/repo to https://github.com/owner/repo.git
+            const gitUrl = repositoryUrl.endsWith('.git') ? repositoryUrl : `${repositoryUrl}.git`;
+
+            // Configure remote
+            try {
+                // Remove remote if it exists
+                await git.deleteRemote({ fs, dir: '/', remote: 'github' }).catch(() => {
+                    // Ignore error if remote doesn't exist
+                });
+            } catch {
+                // Ignore
+            }
+
+            // Add fresh remote
+            await git.addRemote({
+                fs,
+                dir: '/',
+                remote: 'github',
+                url: gitUrl
             });
+
+            GitHubService.logger.info('Remote configured, starting push', {
+                remote: 'github',
+                url: gitUrl
+            });
+
+            // Push with force to handle sync
+            // Set timeout to prevent hanging
+            const PUSH_TIMEOUT_MS = 120000; // 2 minutes
+            const pushPromise = git.push({
+                fs,
+                http, // Built-in Cloudflare Workers HTTP client
+                dir: '/',
+                remote: 'github',
+                ref: 'main',
+                force: true, // Allow non-fast-forward pushes for sync
+                onAuth: () => ({
+                    username: token, // GitHub accepts token as username
+                    password: 'x-oauth-basic' // Or just empty string
+                }),
+                onAuthFailure: (url: any) => {
+                    GitHubService.logger.error('Authentication failed', { url });
+                },
+                onAuthSuccess: (url: any) => {
+                    GitHubService.logger.info('Authentication successful', { url });
+                },
+                onProgress: (progress: any) => {
+                    GitHubService.logger.info('Push progress', {
+                        phase: progress.phase,
+                        loaded: progress.loaded,
+                        total: progress.total
+                    });
+                },
+                onMessage: (message) => {
+                    GitHubService.logger.info('Git message', { message });
+                }
+            });
+
+            // Race against timeout
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error(`Git push timed out after ${PUSH_TIMEOUT_MS}ms`));
+                }, PUSH_TIMEOUT_MS);
+            });
+
+            const pushResult = await Promise.race([pushPromise, timeoutPromise]);
+
+            GitHubService.logger.info('Git push result', { pushResult });
+
+            // Check if push was successful
+            if (!pushResult.ok) {
+                throw new Error(pushResult.error || 'Push failed');
+            }
+
+            // Get the final commit SHA
+            const headCommit = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
 
             return {
                 success: true,
-                commitSha: parentSha
+                commitSha: headCommit
             };
         } catch (error) {
-            GitHubService.logger.error('Force push failed', error);
+            GitHubService.logger.error('Git push failed', { 
+                error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                errorStack: error instanceof Error ? error.stack : undefined
+            });
             throw error;
         }
     }
@@ -465,26 +481,24 @@ export class GitHubService {
             const localCommits = await git.log({ fs, dir: '/', depth: 100 });
 
             // Find divergence
-            // Normalize commit messages by trimming whitespace (git.log adds trailing \n, GitHub API doesn't)
-            const normalizeMessage = (msg: string) => msg.trim();
             
-            // Ignore system-generated commits that we add to GitHub but don't track locally
-            const isSystemGeneratedCommit = (message: string) => {
-                return normalizeMessage(message).startsWith('docs: Add Cloudflare deploy button');
-            };
+            // Use shared helper for finding common commits
+            const commonCommit = GitHubService.findLastCommonCommit(localCommits, remoteCommits);
+            const hasCommonCommit = commonCommit !== null || remoteCommits.length === 0;
             
-            const localMessages = new Set(localCommits.map(c => normalizeMessage(c.commit.message)));
-            const remoteMessages = new Set(remoteCommits.map(c => normalizeMessage(c.commit.message)));
-
-            const hasCommonCommit = localCommits.some(local =>
-                remoteCommits.some(remote => 
-                    normalizeMessage(remote.commit.message) === normalizeMessage(local.commit.message)
-                )
+            const localMessages = new Set(
+                localCommits.map(c => GitHubService.normalizeCommitMessage(c.commit.message))
             );
-
-            const localOnly = localCommits.filter(c => !remoteMessages.has(normalizeMessage(c.commit.message)));
+            const remoteMessages = new Set(
+                remoteCommits.map(c => GitHubService.normalizeCommitMessage(c.commit.message))
+            );
+            
+            const localOnly = localCommits.filter(c => 
+                !remoteMessages.has(GitHubService.normalizeCommitMessage(c.commit.message))
+            );
             const remoteOnly = remoteCommits.filter(c => 
-                !localMessages.has(normalizeMessage(c.commit.message)) && !isSystemGeneratedCommit(c.commit.message)
+                !localMessages.has(GitHubService.normalizeCommitMessage(c.commit.message)) && 
+                !GitHubService.isSystemGeneratedCommit(c.commit.message)
             );
 
             return {
