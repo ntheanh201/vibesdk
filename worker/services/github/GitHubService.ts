@@ -310,16 +310,68 @@ export class GitHubService {
     }
 
     /**
+     * Normalize commit message for comparison
+     */
+    private static normalizeCommitMessage(message: string): string {
+        return message.trim();
+    }
+
+    /**
+     * Check if commit is system-generated
+     */
+    private static isSystemGeneratedCommit(message: string): boolean {
+        const normalized = GitHubService.normalizeCommitMessage(message);
+        return normalized.startsWith('docs: Add Cloudflare deploy button');
+    }
+
+    /**
+     * Find last common commit between local and remote
+     * Returns index in reversed (oldest-first) local commits and GitHub SHA
+     */
+    private static findLastCommonCommit(
+        localCommits: Awaited<ReturnType<typeof git.log>>,
+        remoteCommits: Array<{ sha: string; commit: { message: string } }>
+    ): { lastCommonIndex: number; githubSha: string; localOid: string } | null {
+        const reversedLocal = [...localCommits].reverse();
+        
+        // Search from newest to oldest local commit
+        for (let i = reversedLocal.length - 1; i >= 0; i--) {
+            const localMsg = GitHubService.normalizeCommitMessage(reversedLocal[i].commit.message);
+            
+            // Find matching remote commit (ignore system commits)
+            const matchingRemote = remoteCommits.find(remote => {
+                if (GitHubService.isSystemGeneratedCommit(remote.commit.message)) {
+                    return false;
+                }
+                return GitHubService.normalizeCommitMessage(remote.commit.message) === localMsg;
+            });
+            
+            if (matchingRemote) {
+                return {
+                    lastCommonIndex: i,
+                    githubSha: matchingRemote.sha,
+                    localOid: reversedLocal[i].oid
+                };
+            }
+        }
+        
+        return null;
+    }
+
+    /**
      * Force push to GitHub while preserving commit history
      * Creates proper trees for each commit to preserve diffs
+     * Supports incremental sync by detecting already-pushed commits
      */
     private static async forcePushToGitHub(
         fs: MemFS,
         token: string,
         repoUrl: string,
         commits: Awaited<ReturnType<typeof git.log>>,
-        author: { name: string; email: string }
+        author: { name: string; email: string },
+        options: { incremental?: boolean } = {}
     ): Promise<GitHubPushResponse> {
+        const { incremental = true } = options;
         try {
             const repoInfo = GitHubService.extractRepoInfo(repoUrl);
             if (!repoInfo) {
@@ -333,28 +385,75 @@ export class GitHubService {
             const { data: repository } = await octokit.rest.repos.get({ owner, repo });
             const branch = repository.default_branch || 'main';
 
-            GitHubService.logger.info('Pushing to GitHub with per-commit trees', {
-                owner,
-                repo,
-                branch,
-                commitCount: commits.length
-            });
-
             // Blob cache: content hash -> GitHub blob SHA
             const blobCache = new Map<string, string>();
             let totalBlobsCreated = 0;
             let totalBlobsReused = 0;
 
-            // Process commits from oldest to newest
+            // Try incremental sync first
+            let startFromIndex = 0;
             let parentSha: string | undefined;
             const reversedCommits = [...commits].reverse();
             
-            for (let i = 0; i < reversedCommits.length; i++) {
+            if (incremental) {
+                try {
+                    const { data: remoteCommits } = await octokit.repos.listCommits({
+                        owner,
+                        repo,
+                        per_page: 100
+                    });
+                    
+                    if (remoteCommits.length > 0) {
+                        const commonCommit = GitHubService.findLastCommonCommit(commits, remoteCommits);
+                        
+                        if (commonCommit) {
+                            startFromIndex = commonCommit.lastCommonIndex + 1;
+                            parentSha = commonCommit.githubSha;
+                            
+                            const newCommitsCount = reversedCommits.length - startFromIndex;
+                            
+                            if (newCommitsCount === 0) {
+                                GitHubService.logger.info('No new commits to push');
+                                return {
+                                    success: true,
+                                    commitSha: parentSha
+                                };
+                            }
+                            
+                            GitHubService.logger.info('Incremental sync enabled', {
+                                commonCommit: commonCommit.localOid.slice(0, 7),
+                                skippingCommits: startFromIndex,
+                                pushingCommits: newCommitsCount
+                            });
+                        } else {
+                            GitHubService.logger.info('No common commits found, full push required');
+                        }
+                    }
+                } catch (error) {
+                    GitHubService.logger.warn('Incremental sync check failed, doing full push', { error });
+                    startFromIndex = 0;
+                    parentSha = undefined;
+                }
+            }
+            
+            GitHubService.logger.info('Pushing to GitHub with per-commit trees', {
+                owner,
+                repo,
+                branch,
+                totalCommits: commits.length,
+                processingCommits: reversedCommits.length - startFromIndex,
+                mode: startFromIndex > 0 ? 'incremental' : 'full'
+            });
+            
+            for (let i = startFromIndex; i < reversedCommits.length; i++) {
                 const commit = reversedCommits[i];
                 
-                GitHubService.logger.info(`Processing commit ${i + 1}/${reversedCommits.length}`, {
+                const commitNum = i - startFromIndex + 1;
+                const totalToProcess = reversedCommits.length - startFromIndex;
+                
+                GitHubService.logger.info(`Processing commit ${commitNum}/${totalToProcess}`, {
                     message: commit.commit.message.split('\n')[0],
-                    oid: commit.oid
+                    oid: commit.oid.slice(0, 7)
                 });
                 
                 // Walk this commit's tree to get its files
@@ -514,26 +613,24 @@ export class GitHubService {
             const localCommits = await git.log({ fs, dir: '/', depth: 100 });
 
             // Find divergence
-            // Normalize commit messages by trimming whitespace (git.log adds trailing \n, GitHub API doesn't)
-            const normalizeMessage = (msg: string) => msg.trim();
             
-            // Ignore system-generated commits that we add to GitHub but don't track locally
-            const isSystemGeneratedCommit = (message: string) => {
-                return normalizeMessage(message).startsWith('docs: Add Cloudflare deploy button');
-            };
+            // Use shared helper for finding common commits
+            const commonCommit = GitHubService.findLastCommonCommit(localCommits, remoteCommits);
+            const hasCommonCommit = commonCommit !== null || remoteCommits.length === 0;
             
-            const localMessages = new Set(localCommits.map(c => normalizeMessage(c.commit.message)));
-            const remoteMessages = new Set(remoteCommits.map(c => normalizeMessage(c.commit.message)));
-
-            const hasCommonCommit = localCommits.some(local =>
-                remoteCommits.some(remote => 
-                    normalizeMessage(remote.commit.message) === normalizeMessage(local.commit.message)
-                )
+            const localMessages = new Set(
+                localCommits.map(c => GitHubService.normalizeCommitMessage(c.commit.message))
             );
-
-            const localOnly = localCommits.filter(c => !remoteMessages.has(normalizeMessage(c.commit.message)));
+            const remoteMessages = new Set(
+                remoteCommits.map(c => GitHubService.normalizeCommitMessage(c.commit.message))
+            );
+            
+            const localOnly = localCommits.filter(c => 
+                !remoteMessages.has(GitHubService.normalizeCommitMessage(c.commit.message))
+            );
             const remoteOnly = remoteCommits.filter(c => 
-                !localMessages.has(normalizeMessage(c.commit.message)) && !isSystemGeneratedCommit(c.commit.message)
+                !localMessages.has(GitHubService.normalizeCommitMessage(c.commit.message)) && 
+                !GitHubService.isSystemGeneratedCommit(c.commit.message)
             );
 
             return {
