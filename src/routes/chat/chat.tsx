@@ -11,6 +11,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Expand, Github, GitBranch, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
+import clsx from 'clsx';
 import { Blueprint } from './components/blueprint';
 import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
@@ -134,6 +135,10 @@ export default function Chat() {
 		shouldRefreshPreview,
 		// Preview deployment state
 		isPreviewDeploying,
+		// Issue tracking and debugging state
+		runtimeErrorCount,
+		staticIssueCount,
+		isDebugging,
 	} = useChat({
 		chatId: urlChatId,
 		query: userQuery,
@@ -436,17 +441,15 @@ export default function Chat() {
 		);
 	}, [isBootstrapping, isGeneratingBlueprint]);
 
-	// Check if chat input should be disabled (before blueprint completion and agentId assignment)
+	// Check if chat input should be disabled (before blueprint completion, or during debugging)
 	const isChatDisabled = useMemo(() => {
 		const blueprintStage = projectStages.find(
 			(stage) => stage.id === 'blueprint',
 		);
-		const isBlueprintComplete = blueprintStage?.status === 'completed';
-		const hasAgentId = !!chatId;
+		const blueprintNotCompleted = !blueprintStage || blueprintStage.status !== 'completed';
 
-		// Disable until both blueprint is complete AND we have an agentId
-		return !isBlueprintComplete || !hasAgentId;
-	}, [projectStages, chatId]);
+		return blueprintNotCompleted || isDebugging;
+	}, [projectStages, isDebugging]);
 
 	const chatFormRef = useRef<HTMLFormElement>(null);
 	const { isDragging: isChatDragging, dragHandlers: chatDragHandlers } = useDragDrop({
@@ -528,7 +531,13 @@ export default function Chat() {
 					layout="position"
 					className="flex-1 shrink-0 flex flex-col basis-0 max-w-lg relative z-10 h-full min-h-0"
 				>
-					<div className="flex-1 overflow-y-auto min-h-0 chat-messages-scroll" ref={messagesContainerRef}>
+					<div 
+					className={clsx(
+						'flex-1 overflow-y-auto min-h-0 chat-messages-scroll',
+						isDebugging && 'animate-debug-pulse'
+					)} 
+					ref={messagesContainerRef}
+				>
 						<div className="pt-5 px-4 pb-4 text-sm flex flex-col gap-5">
 							{appLoading ? (
 								<div className="flex items-center gap-2 text-text-tertiary">
@@ -561,41 +570,41 @@ export default function Chat() {
 							)}
 
 							{mainMessage && (
-								<div className="relative">
-									<AIMessage
-										message={mainMessage.content}
-										isThinking={mainMessage.ui?.isThinking}
-										toolEvents={mainMessage.ui?.toolEvents}
-									/>
-									{chatId && (
-										<div className="absolute right-1 top-1">
-											<DropdownMenu>
-												<DropdownMenuTrigger asChild>
-													<Button
-														variant="ghost"
-														size="icon"
-														className="hover:bg-bg-3/80 cursor-pointer"
-													>
-														<MoreHorizontal className="h-4 w-4" />
-														<span className="sr-only">Chat actions</span>
-													</Button>
-												</DropdownMenuTrigger>
-												<DropdownMenuContent align="end" className="w-56">
-													<DropdownMenuItem
-															onClick={(e) => {
-																e.preventDefault();
-																setIsResetDialogOpen(true);
-															}}
-													>
-														<RotateCcw className="h-4 w-4 mr-2" />
-														Reset conversation
-													</DropdownMenuItem>
-												</DropdownMenuContent>
-											</DropdownMenu>
-										</div>
-									)}
-								</div>
-							)}
+							<div className="relative">
+								<AIMessage
+									message={mainMessage.content}
+									isThinking={mainMessage.ui?.isThinking}
+									toolEvents={mainMessage.ui?.toolEvents}
+								/>
+								{chatId && (
+									<div className="absolute right-1 top-1">
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="ghost"
+													size="icon"
+													className="hover:bg-bg-3/80 cursor-pointer"
+												>
+													<MoreHorizontal className="h-4 w-4" />
+													<span className="sr-only">Chat actions</span>
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className="w-56">
+												<DropdownMenuItem
+														onClick={(e) => {
+															e.preventDefault();
+															setIsResetDialogOpen(true);
+														}}
+												>
+													<RotateCcw className="h-4 w-4 mr-2" />
+													Reset conversation
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+									</div>
+								)}
+							</div>
+						)}
 
 							{otherMessages
 								.filter(message => message.role === 'assistant' && message.ui?.isThinking)
@@ -637,6 +646,11 @@ export default function Chat() {
 								chatId={chatId}
 								isDeploying={isDeploying}
 								handleDeployToCloudflare={handleDeployToCloudflare}
+								runtimeErrorCount={runtimeErrorCount}
+								staticIssueCount={staticIssueCount}
+								isDebugging={isDebugging}
+								isGenerating={isGenerating}
+								isThinking={isThinking}
 							/>
 
 							{/* Deployment and Generation Controls */}
@@ -763,11 +777,13 @@ export default function Chat() {
 								}}
 								disabled={isChatDisabled}
 								placeholder={
-									isChatDisabled
-										? 'Please wait for blueprint completion...'
-										: isRunning
-											? 'Chat with AI while generating...'
-											: 'Ask a follow up...'
+									isDebugging
+										? 'Deep debugging in progress... Please abort to continue'
+										: isChatDisabled
+											? 'Please wait for blueprint completion...'
+											: isRunning
+												? 'Chat with AI while generating...'
+												: 'Chat with AI...'
 								}
 								rows={1}
 								className="w-full bg-bg-2 border border-text-primary/10 rounded-xl px-3 pr-20 py-2 text-sm outline-none focus:border-white/20 drop-shadow-2xl text-text-primary placeholder:!text-text-primary/50 disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-y-auto no-scrollbar min-h-[36px] max-h-[120px]"
@@ -952,14 +968,29 @@ export default function Chat() {
 							{view === 'blueprint' && (
 								<div className="flex-1 flex flex-col bg-bg-3 rounded-xl shadow-md shadow-bg-2 overflow-hidden border border-border-primary">
 									{/* Toolbar */}
-									<div className="flex items-center justify-center px-2 h-10 bg-bg-2 border-b">
-										<div className="flex items-center gap-2">
-											<span className="text-sm text-text-50/70 font-mono">
-												Blueprint.md
-											</span>
-											{previewUrl && (
-												<Copy text={previewUrl} />
-											)}
+									<div className="grid grid-cols-3 px-2 h-10 bg-bg-2 border-b">
+										<div className="flex items-center">
+											<ViewModeSwitch
+												view={view}
+												onChange={handleViewModeChange}
+												previewAvailable={!!previewUrl}
+												showTooltip={showTooltip}
+											/>
+										</div>
+
+										<div className="flex items-center justify-center">
+											<div className="flex items-center gap-2">
+												<span className="text-sm text-text-50/70 font-mono">
+													Blueprint.md
+												</span>
+												{previewUrl && (
+													<Copy text={previewUrl} />
+												)}
+											</div>
+										</div>
+
+										<div className="flex items-center justify-end">
+											{/* Right side - can add actions here if needed */}
 										</div>
 									</div>
 									<div className="flex-1 overflow-y-auto bg-bg-3">

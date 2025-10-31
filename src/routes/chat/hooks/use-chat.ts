@@ -102,6 +102,11 @@ export function useChat({
 	const [cloudflareDeploymentUrl, setCloudflareDeploymentUrl] = useState<string>('');
 	const [deploymentError, setDeploymentError] = useState<string>();
 	
+	// Issue tracking and debugging state
+	const [runtimeErrorCount, setRuntimeErrorCount] = useState(0);
+	const [staticIssueCount, setStaticIssueCount] = useState(0);
+	const [isDebugging, setIsDebugging] = useState(false);
+	
 	// Preview deployment state
 	const [isPreviewDeploying, setIsPreviewDeploying] = useState(false);
 	
@@ -182,6 +187,9 @@ export function useChat({
 			setIsGenerationPaused,
 			setIsGenerating,
 			setIsPhaseProgressActive,
+			setRuntimeErrorCount,
+			setStaticIssueCount,
+			setIsDebugging,
 			// Current state
 			isInitialStateRestored,
 			blueprint,
@@ -540,6 +548,17 @@ export function useChat({
 		}
 	}, [edit]);
 
+	// Track debugging state based on deep_debug tool events in messages
+	useEffect(() => {
+		const hasActiveDebug = messages.some(msg => 
+			msg.role === 'assistant' && 
+			msg.ui?.toolEvents?.some(event => 
+				event.name === 'deep_debug' && event.status === 'start'
+			)
+		);
+		setIsDebugging(hasActiveDebug);
+	}, [messages]);
+
 	// Control functions for deployment and generation
 	const handleStopGeneration = useCallback(() => {
 		sendWebSocketMessage(websocket, 'stop_generation');
@@ -634,5 +653,9 @@ export function useChat({
 		isPreviewDeploying,
 		// Phase progress visual indicator
 		isPhaseProgressActive,
+		// Issue tracking and debugging state
+		runtimeErrorCount,
+		staticIssueCount,
+		isDebugging,
 	};
 }
