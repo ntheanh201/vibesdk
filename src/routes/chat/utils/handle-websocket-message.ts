@@ -346,6 +346,8 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     logger.debug('Merging conversation_state with', deduplicated.length, 'messages (', restoredMessages.length - deduplicated.length, 'duplicates removed)');
                     setMessages(prev => {
                         const hasFetching = prev.some(m => m.role === 'assistant' && m.conversationId === 'fetching-chat');
+                        const hasReconnect = prev.some(m => m.role === 'assistant' && m.conversationId === 'websocket_reconnected');
+                        
                         if (hasFetching) {
                             const next = appendToolEvent(prev, 'fetching-chat', { 
                                 name: 'fetching your latest conversations', 
@@ -353,6 +355,12 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             });
                             return [...next, ...deduplicated];
                         }
+                        
+                        if (hasReconnect) {
+                            // Preserve reconnect message on top when restoring state after reconnect
+                            return [...prev, ...deduplicated];
+                        }
+                        
                         return deduplicated;
                     });
                 }
@@ -599,10 +607,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         }
                         return updated;
                     });
-
-                    if (message.phase.name === 'Finalization and Review') {
-                        sendMessage(createAIMessage('core_app_complete', 'Main app generation completed. Doing code cleanups and resolving any lingering issues. Meanwhile, feel free to ask me anything!'));
-                    }
                 }
 
                 logger.debug('🔄 Scheduling preview refresh in 1 second after deployment completion');

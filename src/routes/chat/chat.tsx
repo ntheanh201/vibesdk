@@ -410,7 +410,8 @@ export default function Chat() {
 	}, [isGeneratingBlueprint, view]);
 
 	useEffect(() => {
-		if (doneStreaming && !isGeneratingBlueprint && !blueprint) {
+		// Only show bootstrap completion message for NEW chats, not when reloading existing ones
+		if (doneStreaming && !isGeneratingBlueprint && !blueprint && urlChatId === 'new') {
 			onCompleteBootstrap();
 			sendAiMessage(
 				createAIMessage(
@@ -426,6 +427,7 @@ export default function Chat() {
 		sendAiMessage,
 		blueprint,
 		onCompleteBootstrap,
+		urlChatId,
 	]);
 
 	const isRunning = useMemo(() => {
@@ -595,6 +597,27 @@ export default function Chat() {
 								</div>
 							)}
 
+							{otherMessages
+								.filter(message => message.role === 'assistant' && message.ui?.isThinking)
+								.map((message) => (
+									<div key={message.conversationId} className="mb-4">
+										<AIMessage
+											message={message.content}
+											isThinking={true}
+											toolEvents={message.ui?.toolEvents}
+										/>
+									</div>
+								))}
+
+							{isThinking && !otherMessages.some(m => m.ui?.isThinking) && (
+								<div className="mb-4">
+									<AIMessage
+										message="Planning next phase..."
+										isThinking={true}
+									/>
+								</div>
+							)}
+
 							<PhaseTimeline
 								projectStages={projectStages}
 								phaseTimeline={phaseTimeline}
@@ -654,24 +677,27 @@ export default function Chat() {
 								</motion.div>
 							)}
 
-							{otherMessages.map((message) => {
-								if (message.role === 'assistant') {
+							{otherMessages
+								.filter(message => !message.ui?.isThinking)
+								.map((message) => {
+									if (message.role === 'assistant') {
+										return (
+											<AIMessage
+												key={message.conversationId}
+												message={message.content}
+												isThinking={message.ui?.isThinking}
+												toolEvents={message.ui?.toolEvents}
+											/>
+										);
+									}
 									return (
-										<AIMessage
+										<UserMessage
 											key={message.conversationId}
 											message={message.content}
-											isThinking={message.ui?.isThinking}
-											toolEvents={message.ui?.toolEvents}
 										/>
 									);
-								}
-								return (
-									<UserMessage
-										key={message.conversationId}
-										message={message.content}
-									/>
-								);
-							})}
+								})}
+
 						</div>
 					</div>
 
