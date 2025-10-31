@@ -80,7 +80,6 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
 export const WebSocketMessageRequests = {
     GENERATE_ALL: 'generate_all',
     GENERATE: 'generate',
-    CODE_REVIEW: 'code_review',
     DEPLOY: 'deploy',
     PREVIEW: 'preview',
     OVERWRITE: 'overwrite',

@@ -45,45 +45,6 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
                     }
                 });
                 break;
-            case WebSocketMessageRequests.CODE_REVIEW:
-                if (agent.isCodeGenerating()) {
-                    sendError(connection, 'Cannot perform code review while generating files');
-                    return;
-                }
-                sendToConnection(connection, WebSocketMessageResponses.CODE_REVIEW, {
-                    message: 'Starting code review'
-                });
-                agent.reviewCode().then(reviewResult => {
-                    if (!reviewResult) {
-                        sendError(connection, 'Failed to perform code review');
-                        return;
-                    }
-                    sendToConnection(connection, WebSocketMessageResponses.CODE_REVIEW, {
-                        review: reviewResult,
-                        issuesFound: reviewResult.issuesFound,
-                    });
-                    if (reviewResult.issuesFound && parsedMessage.autoFix === true) {
-                        for (const fileToFix of reviewResult.filesToFix) {
-                            const fileToRegenerate = agent.state.generatedFilesMap[fileToFix.filePath];
-                            if (!fileToRegenerate) {
-                                logger.warn(`File to fix not found in generated files: ${fileToFix.filePath}`);
-                                continue;
-                            }
-                            agent.regenerateFile(
-                                fileToRegenerate,
-                                fileToFix.issues,
-                                0
-                            ).catch((error: unknown) => {
-                                logger.error(`Error regenerating file ${fileToRegenerate.filePath}:`, error);
-                                sendError(connection, `Error regenerating file: ${error instanceof Error ? error.message : String(error)}`);
-                            });
-                        }
-                    }
-                }).catch(error => {
-                    logger.error('Error during code review:', error);
-                    sendError(connection, `Error during code review: ${error instanceof Error ? error.message : String(error)}`);
-                });
-                break;
             case WebSocketMessageRequests.DEPLOY:
                 agent.deployToCloudflare().then((deploymentResult) => {
                     if (!deploymentResult) {
