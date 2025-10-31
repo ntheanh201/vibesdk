@@ -22,7 +22,6 @@ export enum CurrentDevState {
     PHASE_GENERATING,
     PHASE_IMPLEMENTING,
     REVIEWING,
-    FILE_REGENERATING,
     FINALIZING,
 }
 

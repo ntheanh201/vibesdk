@@ -24,7 +24,6 @@ import { DeploymentManager } from '../services/implementations/DeploymentManager
 import { GenerationContext } from '../domain/values/GenerationContext';
 import { IssueReport } from '../domain/values/IssueReport';
 import { PhaseImplementationOperation } from '../operations/PhaseImplementation';
-import { CodeReviewOperation } from '../operations/CodeReview';
 import { FileRegenerationOperation } from '../operations/FileRegeneration';
 import { PhaseGenerationOperation } from '../operations/PhaseGeneration';
 import { ScreenshotAnalysisOperation } from '../operations/ScreenshotAnalysis';
@@ -52,9 +51,9 @@ import { DeepDebugResult } from './types';
 import { StateMigration } from './stateMigration';
 import { generateNanoId } from 'worker/utils/idGenerator';
 import { updatePackageJson } from '../utils/packageSyncer';
+import { IdGenerator } from '../utils/idGenerator';
 
 interface Operations {
-    codeReview: CodeReviewOperation;
     regenerateFile: FileRegenerationOperation;
     generateNextPhase: PhaseGenerationOperation;
     analyzeScreenshot: ScreenshotAnalysisOperation;
@@ -104,7 +103,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     private currentAbortController?: AbortController;
     
     protected operations: Operations = {
-        codeReview: new CodeReviewOperation(),
         regenerateFile: new FileRegenerationOperation(),
         generateNextPhase: new PhaseGenerationOperation(),
         analyzeScreenshot: new ScreenshotAnalysisOperation(),
@@ -512,6 +510,22 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (runningHistory.length === 0) {
             runningHistory = currentConversation;
         }
+
+        // Remove duplicates
+        const deduplicateMessages = (messages: ConversationMessage[]): ConversationMessage[] => {
+            const seen = new Set<string>();
+            return messages.filter(msg => {
+                if (seen.has(msg.conversationId)) {
+                    return false;
+                }
+                seen.add(msg.conversationId);
+                return true;
+            });
+        };
+
+        runningHistory = deduplicateMessages(runningHistory);
+        fullHistory = deduplicateMessages(fullHistory);
+        
         return {
             id: id,
             runningHistory,
@@ -531,7 +545,32 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
-    async saveToDatabase() {
+    addConversationMessage(message: ConversationMessage) {
+        const conversationState = this.getConversationState();
+        if (!conversationState.runningHistory.find(msg => msg.conversationId === message.conversationId)) {
+            conversationState.runningHistory.push(message);
+        } else  {
+            conversationState.runningHistory = conversationState.runningHistory.map(msg => {
+                if (msg.conversationId === message.conversationId) {
+                    return message;
+                }
+                return msg;
+            });
+        }
+        if (!conversationState.fullHistory.find(msg => msg.conversationId === message.conversationId)) {
+            conversationState.fullHistory.push(message);
+        } else {
+            conversationState.fullHistory = conversationState.fullHistory.map(msg => {
+                if (msg.conversationId === message.conversationId) {
+                    return message;
+                }
+                return msg;
+            });
+        }
+        this.setConversationState(conversationState);
+    }
+
+    private async saveToDatabase() {
         this.logger().info(`Blueprint generated successfully for agent ${this.getAgentId()}`);
         // Save the app to database (authenticated users only)
         const appService = new AppService(this.env);
@@ -998,12 +1037,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     }
 
     /**
-     * Execute review cycle state - run code review and regeneration cycles
+     * Execute review cycle state - review and cleanup
      */
     async executeReviewCycle(): Promise<CurrentDevState> {
-        this.logger().info("Executing REVIEWING state");
-
-        const reviewCycles = 2;
+        this.logger().info("Executing REVIEWING state - review and cleanup");
         if (this.state.reviewingInitiated) {
             this.logger().info("Reviewing already initiated, skipping");
             return CurrentDevState.IDLE;
@@ -1012,78 +1049,27 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             reviewingInitiated: true
         });
-        
-        try {
-            this.logger().info("Starting code review and improvement cycle...");
 
-            for (let i = 0; i < reviewCycles; i++) {
-                // Check if user input came during review - if so, go back to phase generation
-                if (this.state.pendingUserInputs.length > 0) {
-                    this.logger().info("User input received during review, transitioning back to PHASE_GENERATING");
-                    return CurrentDevState.PHASE_GENERATING;
-                }
-
-                this.logger().info(`Starting code review cycle ${i + 1}...`);
-
-                const reviewResult = await this.reviewCode();
-
-                if (!reviewResult) {
-                    this.logger().warn("Code review failed. Skipping fix cycle.");
-                    break;
-                }
-
-                const issuesFound = reviewResult.issuesFound;
-
-                if (issuesFound) {
-                    this.logger().info(`Issues found in review cycle ${i + 1}`, { issuesFound });
-                    const promises = [];
-
-                    for (const fileToFix of reviewResult.filesToFix) {
-                        if (!fileToFix.require_code_changes) continue;
-                        
-                        const fileToRegenerate = this.fileManager.getGeneratedFile(fileToFix.filePath);
-                        if (!fileToRegenerate) {
-                            this.logger().warn(`File to fix not found in generated files: ${fileToFix.filePath}, skipping`);
-                            continue;
-                        }
-                        
-                        promises.push(this.regenerateFile(
-                            fileToRegenerate,
-                            fileToFix.issues,
-                            0
-                        ));
-                    }
-
-                    const fileResults = await Promise.allSettled(promises);
-                    const files: FileOutputType[] = fileResults.map(result => result.status === "fulfilled" ? result.value : null).filter((result) => result !== null);
-
-                    await this.deployToSandbox(files, false, "fix: Applying code review fixes");
-
-                    // await this.applyDeterministicCodeFixes();
-
-                    this.logger().info("Completed regeneration for review cycle");
-                } else {
-                    this.logger().info("Code review found no issues. Review cycles complete.");
-                    break;
-                }
+        // If issues/errors found, prompt user if they want to review and cleanup
+        const issues = await this.fetchAllIssues(false);
+        if (issues.runtimeErrors.length > 0 || issues.staticAnalysis.typecheck.issues.length > 0) {
+            this.logger().info("Reviewing stage - issues found, prompting user to review and cleanup");
+            const message : ConversationMessage = {
+                role: "assistant",
+                content: `<system_context>If the user responds with yes, launch the 'deep_debug' tool with the prompt to fix all the issues in the app</system_context>\nThere might be some bugs in the app. Do you want me to try to fix them?`,
+                conversationId: IdGenerator.generateConversationId(),
             }
-
-            // Check again for user input before finalizing
-            if (this.state.pendingUserInputs.length > 0) {
-                this.logger().info("User input received after review, transitioning back to PHASE_GENERATING");
-                return CurrentDevState.PHASE_GENERATING;
-            } else {
-                this.logger().info("Review cycles complete, transitioning to IDLE");
-                return CurrentDevState.IDLE;
-            }
-
-        } catch (error) {
-            this.logger().error("Error during review cycle:", error);
-            if (error instanceof RateLimitExceededError) {
-                throw error;
-            }
-            return CurrentDevState.IDLE;
+            // Store the message in the conversation history so user's response can trigger the deep debug tool
+            this.addConversationMessage(message);
+            
+            this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                message: message.content,
+                conversationId: message.conversationId,
+                isStreaming: false,
+            });
         }
+
+        return CurrentDevState.IDLE;
     }
 
     /**
@@ -1320,7 +1306,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     
         // Deploy generated files
         if (finalFiles.length > 0) {
-            await this.deployToSandbox(finalFiles, false, phase.name);
+            await this.deployToSandbox(finalFiles, false, phase.name, true);
             if (postPhaseFixing) {
                 await this.applyDeterministicCodeFixes();
                 if (this.state.inferenceContext.enableFastSmartCodeFix) {
@@ -1422,39 +1408,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().error('Error fetching model configs info:', error);
             throw error;
         }
-    }
-
-    /**
-     * Perform comprehensive code review
-     * Analyzes for runtime errors, static issues, and best practices
-     */
-    async reviewCode() {
-        const issues = await this.fetchAllIssues(true);
-        const issueReport = IssueReport.from(issues);
-
-        // Report discovered issues
-        this.broadcast(WebSocketMessageResponses.CODE_REVIEWING, {
-            message: "Running code review...",
-            staticAnalysis: issues.staticAnalysis,
-            runtimeErrors: issues.runtimeErrors
-        });
-
-        const reviewResult = await this.operations.codeReview.execute(
-            {issues: issueReport},
-            this.getOperationOptions()
-        );
-        
-        // Execute commands if any
-        if (reviewResult.commands && reviewResult.commands.length > 0) {
-            await this.executeCommands(reviewResult.commands);
-        }
-        // Notify review completion
-        this.broadcast(WebSocketMessageResponses.CODE_REVIEWED, {
-            review: reviewResult,
-            message: "Code review completed"
-        });
-        
-        return reviewResult;
     }
 
     /**
@@ -1784,7 +1737,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         let fileContents = '';
         let filePurpose = '';
         try {
-            const fmFile = this.fileManager.getGeneratedFile(path);
+            const fmFile = this.fileManager.getFile(path);
             if (fmFile) {
                 fileContents = fmFile.fileContents;
                 filePurpose = fmFile.filePurpose || '';
