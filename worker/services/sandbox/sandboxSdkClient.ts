@@ -60,7 +60,7 @@ interface InstanceMetadata {
     redacted_files: string[];
 }
 
-type SandboxType = DurableObjectStub<Sandbox<Env>>;
+type SandboxType = Sandbox;
 
 type ExecutionSession = Awaited<ReturnType<Sandbox['createSession']>>;
 
