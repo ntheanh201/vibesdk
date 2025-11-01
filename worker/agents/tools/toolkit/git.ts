@@ -9,6 +9,7 @@ interface GitToolArgs {
 	message?: string;
 	limit?: number;
 	oid?: string;
+	includeDiff?: boolean;
 }
 
 export function createGitTool(
@@ -53,12 +54,16 @@ export function createGitTool(
 						description: hasReset 
 							? 'Commit hash/OID (required for show and reset commands)'
 							: 'Commit hash/OID (required for show command)'
+					},
+					includeDiff: {
+						type: 'boolean',
+						description: 'Include file diffs in show command output (default: false). Use ONLY when you need to see actual code changes. WARNING: Slower for commits with many/large files.'
 					}
 				},
 				required: ['command'],
 			},
 		},
-		implementation: async ({ command, message, limit, oid }: GitToolArgs) => {
+		implementation: async ({ command, message, limit, oid, includeDiff }: GitToolArgs) => {
 			try {
 				const gitInstance = agent.getGit();
 				
@@ -100,8 +105,8 @@ export function createGitTool(
 							};
 						}
 						
-						logger.info('Git show', { oid });
-						const result = await gitInstance.show(oid);
+						logger.info('Git show', { oid, includeDiff });
+						const result = await gitInstance.show(oid, { includeDiff });
 						
 						return {
 							success: true,
