@@ -312,18 +312,30 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             ? 'previous history was compacted' 
                             : (text || '');
                         
-                        // Only merge if same conversationId (continuation), otherwise create new
-                        if (currentAssistant && currentAssistant.conversationId === msg.conversationId) {
+                        const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+                        
+                        // Merge all consecutive assistant messages into one bubble
+                        if (currentAssistant) {
+                            // Append content if present
                             if (content) {
                                 currentAssistant.content += (currentAssistant.content ? '\n\n' : '') + content;
                             }
-                            if (msg.tool_calls?.length) ensureToolEvents(currentAssistant);
+                            // Append tool_calls if present
+                            if (hasToolCalls) {
+                                if (!currentAssistant.tool_calls) {
+                                    currentAssistant.tool_calls = [];
+                                }
+                                currentAssistant.tool_calls.push(...msg.tool_calls!);
+                                ensureToolEvents(currentAssistant);
+                            }
                         } else {
+                            // Create new assistant message
                             currentAssistant = {
                                 role: 'assistant',
                                 conversationId: msg.conversationId,
                                 content,
-                                ui: msg.tool_calls?.length ? { toolEvents: [] } : undefined,
+                                ui: hasToolCalls ? { toolEvents: [] } : undefined,
+                                tool_calls: hasToolCalls ? [...msg.tool_calls!] : undefined,
                             };
                             restoredMessages.push(currentAssistant);
                         }

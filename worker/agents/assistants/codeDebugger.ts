@@ -291,10 +291,18 @@ git({ command: 'log', limit: 10 })
 
 **3. show - View commit details**
 \`\`\`typescript
+// Basic usage - just file list (fast)
 git({ command: 'show', oid: 'abc123...' })
 // Returns: { success: true, data: { oid, files: N, fileList: [...] } }
+
+// With diffs - see actual code changes (slower)
+git({ command: 'show', oid: 'abc123...', includeDiff: true })
+// Returns: { ..., diffs: [{ path: 'file.ts', diff: '+added\n-removed\n...' }] }
 \`\`\`
 - **Use for**: Inspecting what files changed in a specific commit
+- **includeDiff=true**: Use when you need to see the actual code changes (line-by-line diffs)
+- **includeDiff=false** (default): Use when you just need the list of changed files (faster)
+- **WARNING**: includeDiff is slower for commits with many/large files
 
 **4. reset - Move HEAD to a previous commit (hard reset)**
 \`\`\`typescript
