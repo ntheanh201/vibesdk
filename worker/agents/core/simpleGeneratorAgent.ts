@@ -2228,7 +2228,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             this.logger().info('Successfully synced package.json to git', { 
                 filePath: fileState.filePath,
-                hash: fileState.lasthash 
             });
             
             // Broadcast update to clients

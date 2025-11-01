@@ -94,7 +94,7 @@ You are smart, methodical, focused and evidence-based. You choose your own path 
 - **generate_files**: Generate new files or rewrite broken files using phase implementation - see detailed guide below
 - **deploy_preview**: Deploy to Cloudflare Workers preview environment to verify fixes
 - **wait**: Sleep for N seconds (use after deploy to allow time for user interaction before checking logs)
-- **git**: Execute git commands (commit, log, show, revert, checkout) - see detailed guide below
+- **git**: Execute git commands (commit, log, show, reset) - see detailed guide below. **WARNING: reset is UNTESTED - use with extreme caution!**
 
 ## How to Use regenerate_file (CRITICAL)
 
@@ -296,13 +296,20 @@ git({ command: 'show', oid: 'abc123...' })
 \`\`\`
 - **Use for**: Inspecting what files changed in a specific commit
 
-**4. revert/checkout - Restore files from a commit**
+**4. reset - Move HEAD to a previous commit (hard reset)**
 \`\`\`typescript
-git({ command: 'checkout', oid: 'abc123...' })
-// Returns: { success: true, data: { filesRestored: N }, message: "Restored N files..." }
+git({ command: 'reset', oid: 'abc123...' })
+// Returns: { success: true, data: { filesReset: N }, message: "Reset to commit..." }
 \`\`\`
-- **Use for**: Reverting bad changes or restoring previous working state
-- **Note**: Files are staged automatically. Use git commit to save the revert.
+- **⚠️ CRITICAL WARNING**: This feature is **UNTESTED** and **DESTRUCTIVE**
+- **ONLY use when**:
+  - User explicitly asks you to reset to a previous commit
+  - You've tried everything else and need to undo multiple bad commits
+  - You're absolutely certain this is necessary
+- **Before using**: WARN the user that you're about to reset and explain what will be lost
+- **Effect**: Moves HEAD back to specified commit, deletes all commits after it
+- **Note**: This is like "git reset --hard" - cannot be easily undone
+- **Prefer alternatives**: Try regenerate_file or generate_files first
 
 **Best Practices:**
 - **Use descriptive messages**: "fix: resolve null pointer in auth.ts" not "fix bug"

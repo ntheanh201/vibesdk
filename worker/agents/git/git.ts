@@ -16,6 +16,7 @@ export interface CommitInfo {
 type FileSnapshot = Omit<FileOutputType, 'filePurpose'>;
 
 export class GitVersionControl {
+    private onFilesChangedCallback?: () => void;
     public fs: SqliteFS;
     private author: { name: string; email: string };
 
@@ -25,6 +26,20 @@ export class GitVersionControl {
         
         // Initialize SQLite table synchronously
         this.fs.init();
+    }
+
+    setOnFilesChangedCallback(callback: () => void): void {
+        this.onFilesChangedCallback = callback;
+    }
+
+    async getAllFilesFromHead(): Promise<Array<{ filePath: string; fileContents: string }>> {
+        try {
+            const oid = await git.resolveRef({ fs: this.fs, dir: '/', ref: 'HEAD' });
+            const files = await this.readFilesFromCommit(oid);
+            return files;
+        } catch (error) {
+            return [];
+        }
     }
 
     async init(): Promise<void> {
@@ -143,7 +158,7 @@ export class GitVersionControl {
         }
     }
 
-    async checkout(oid: string): Promise<FileSnapshot[]> {
+    private async readFilesFromCommit(oid: string): Promise<FileSnapshot[]> {
         const { commit } = await git.readCommit({ fs: this.fs, dir: '/', oid });
         const files: FileSnapshot[] = [];
         await this.walkTree(commit.tree, '', files);
@@ -164,43 +179,21 @@ export class GitVersionControl {
         };
     }
 
-    async restoreCommit(oid: string): Promise<{ oid: string; filesRestored: number }> {
-        // Use git.checkout to restore files from commit and stage them
-        // noUpdateHead=true keeps us on current branch, force=true overwrites working directory
-        await git.checkout({ fs: this.fs, dir: '/', ref: oid, noUpdateHead: true, force: true });
+    async reset(ref: string, options?: { hard?: boolean }): Promise<{ ref: string; filesReset: number }> {
+        // Update HEAD to point to the specified ref
+        const oid = await git.resolveRef({ fs: this.fs, dir: '/', ref });
+        await git.writeRef({ fs: this.fs, dir: '/', ref: 'HEAD', value: oid, force: true });
         
-        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: oid });
-        return { oid, filesRestored: files.length };
-    }
-
-    async revert(oid: string): Promise<{ revertedCommit: string; revertCommit: string | null; filesReverted: number }> {
-        const commits = await this.log(50);
-        const commitToRevert = commits.find(c => c.oid === oid);
-        
-        if (!commitToRevert) {
-            throw new Error(`Commit ${oid} not found`);
+        // If hard reset, also update working directory
+        if (options?.hard !== false) {
+            await git.checkout({ fs: this.fs, dir: '/', ref, force: true });
         }
         
-        const commitIndex = commits.findIndex(c => c.oid === oid);
-        const parentCommit = commits[commitIndex + 1];
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref });
         
-        if (!parentCommit) {
-            throw new Error(`Cannot revert ${oid} - no parent commit found`);
-        }
+        this.onFilesChangedCallback?.();
         
-        // Restore files from parent commit (before the bad commit)
-        await git.checkout({ fs: this.fs, dir: '/', ref: parentCommit.oid, noUpdateHead: true, force: true });
-        
-        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: parentCommit.oid });
-        
-        // Create a revert commit
-        const revertOid = await this.commit([], `Revert "${commitToRevert.message}"\n\nThis reverts commit ${commitToRevert.oid}.`);
-        
-        return {
-            revertedCommit: commitToRevert.oid,
-            revertCommit: revertOid,
-            filesReverted: files.length
-        };
+        return { ref, filesReset: files.length };
     }
 
     private async walkTree(treeOid: string, prefix: string, files: FileSnapshot[]): Promise<void> {

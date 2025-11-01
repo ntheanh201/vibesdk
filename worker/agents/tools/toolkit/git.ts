@@ -2,7 +2,7 @@ import { ToolDefinition } from '../types';
 import { StructuredLogger } from '../../../logger';
 import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
 
-type GitCommand = 'commit' | 'log' | 'show' | 'revert' | 'checkout';
+type GitCommand = 'commit' | 'log' | 'show' | 'reset';
 
 interface GitToolArgs {
 	command: GitCommand;
@@ -20,13 +20,13 @@ export function createGitTool(
 		function: {
 			name: 'git',
 			description:
-				'Execute git commands. Commands: commit (save staged changes), log (view history), show (view commit details), revert (undo commit), checkout (restore files from commit).',
+				'Execute git commands. Commands: commit (save staged changes), log (view history), show (view commit details), reset (undo commits - USE WITH EXTREME CAUTION).',
 			parameters: {
 				type: 'object',
 				properties: {
 					command: {
 						type: 'string',
-						enum: ['commit', 'log', 'show', 'revert', 'checkout'],
+						enum: ['commit', 'log', 'show', 'reset'],
 						description: 'Git command to execute'
 					},
 					message: {
@@ -39,7 +39,7 @@ export function createGitTool(
 					},
 					oid: {
 						type: 'string',
-						description: 'Commit hash/OID (required for show, revert, checkout commands)'
+						description: 'Commit hash/OID (required for show and reset commands)'
 					}
 				},
 				required: ['command'],
@@ -97,39 +97,21 @@ export function createGitTool(
 						};
 					}
 					
-					case 'checkout': {
+					case 'reset': {
 						if (!oid) {
 							return {
 								success: false,
-								message: 'Commit OID is required for checkout command'
+								message: 'Commit OID is required for reset command'
 							};
 						}
 						
-						logger.info('Git checkout', { oid });
-						const result = await gitInstance.restoreCommit(oid);
+						logger.info('Git reset', { oid });
+						const result = await gitInstance.reset(oid, { hard: true });
 						
 						return {
 							success: true,
 							data: result,
-							message: `Restored ${result.filesRestored} files from commit ${result.oid.substring(0, 7)}. Files are staged.`
-						};
-					}
-					
-					case 'revert': {
-						if (!oid) {
-							return {
-								success: false,
-								message: 'Commit OID is required for revert command'
-							};
-						}
-						
-						logger.info('Git revert', { oid });
-						const result = await gitInstance.revert(oid);
-						
-						return {
-							success: true,
-							data: result,
-							message: `Reverted commit ${result.revertedCommit.substring(0, 7)}. New commit: ${result.revertCommit?.substring(0, 7)}`
+							message: `Reset to commit ${result.ref.substring(0, 7)}. ${result.filesReset} files updated. HEAD moved.`
 						};
 					}
 					
