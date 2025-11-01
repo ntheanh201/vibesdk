@@ -278,13 +278,12 @@ export function AIMessage({
 	
 	// Check if this is a live session with actual content
 	const hasInlineEvents = toolEvents.some(ev => ev.contentLength !== undefined);
-	const hasSubstantialContent = sanitizedMessage && sanitizedMessage.length > 50; // More than just "Initializing..."
 	const hasToolCalls = toolEvents.some(ev => ev.name !== 'deep_debug');
 	
 	// Only show bubble if: actively debugging OR (completed/errored with actual content/tool calls and inline events)
 	const isLiveDebugSession = debugEvent && (
 		isActiveDebug || 
-		(isCompletedDebug && hasInlineEvents && (hasSubstantialContent || hasToolCalls))
+		(isCompletedDebug && hasInlineEvents && hasToolCalls)
 	);
 	
 	// Calculate elapsed time for active debug sessions

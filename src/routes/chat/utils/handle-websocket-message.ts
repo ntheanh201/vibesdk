@@ -114,6 +114,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             setIsGenerationPaused,
             setIsGenerating,
             setIsPhaseProgressActive,
+            setIsDebugging,
             isInitialStateRestored,
             blueprint,
             query,
@@ -618,6 +619,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'generation_stopped': {
                 setIsGenerating(false);
                 setIsGenerationPaused(true);
+                setIsDebugging(false);
                 
                 // Reset phase indicators
                 setIsPhaseProgressActive(false);

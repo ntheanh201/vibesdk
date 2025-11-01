@@ -801,7 +801,7 @@ export default function Chat() {
 								}}
 							/>
 							<div className="absolute right-1.5 bottom-2.5 flex items-center gap-1">
-								{(isGenerating || isGeneratingBlueprint) && (
+								{(isGenerating || isGeneratingBlueprint || isDebugging) && (
 									<button
 										type="button"
 										onClick={() => {

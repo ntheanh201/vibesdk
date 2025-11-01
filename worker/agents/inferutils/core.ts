@@ -331,13 +331,59 @@ type InferWithCustomFormatArgs = InferArgsStructured & {
     format?: SchemaFormat;
     formatOptions?: FormatterOptions;
 };
+
+export interface ToolCallContext {
+    messages: Message[];
+    depth: number;
+}
+
+export function serializeCallChain(context: ToolCallContext, finalResponse: string): string {
+    // Build a transcript of the tool call messages, and append the final response
+    let transcript = '**Request terminated by user, partial response transcript (last 5 messages):**\n\n<call_chain_transcript>';
+    for (const message of context.messages.slice(-5)) {
+        let content = message.content;
+        
+        // Truncate tool messages to 100 chars
+        if (message.role === 'tool' || message.role === 'function') {
+            content = (content || '').slice(0, 100);
+        }
+        
+        transcript += `<message role="${message.role}">${content}</message>`;
+    }
+    transcript += `<final_response>${finalResponse || '**cancelled**'}</final_response>`;
+    transcript += '</call_chain_transcript>';
+    return transcript;
+}
+
 export class InferError extends Error {
     constructor(
         message: string,
-        public partialResponse?: string,
+        public response: string,
+        public toolCallContext?: ToolCallContext
     ) {
         super(message);
         this.name = 'InferError';
+    }
+
+    partialResponseTranscript(): string {
+        if (!this.toolCallContext) {
+            return this.response;
+        }
+        return serializeCallChain(this.toolCallContext, this.response);
+    }
+
+    partialResponse(): InferResponseString {
+        return {
+            string: this.response,
+            toolCallContext: this.toolCallContext
+        };
+    }
+}
+
+export class AbortError extends InferError {
+    constructor(response: string, toolCallContext?: ToolCallContext) {
+        super('Inference cancelled by user', response, toolCallContext);
+        this.name = 'AbortError';
     }
 }
 
@@ -392,11 +438,6 @@ async function executeToolCalls(openAiToolCalls: ChatCompletionMessageFunctionTo
     );
 }
 
-export interface ToolCallContext {
-    messages: Message[];
-    depth: number;
-}
-
 export function infer<OutputSchema extends z.AnyZodObject>(
     args: InferArgsStructured,
     toolCallContext?: ToolCallContext,
@@ -446,7 +487,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         console.warn(`Tool calling depth limit reached (${currentDepth}/${MAX_TOOL_CALLING_DEPTH}). Stopping recursion.`);
         // Return a response indicating max depth reached
         if (schema) {
-            throw new Error(`Maximum tool calling depth (${MAX_TOOL_CALLING_DEPTH}) exceeded. Tools may be calling each other recursively.`);
+            throw new InferError(`Maximum tool calling depth (${MAX_TOOL_CALLING_DEPTH}) exceeded. Tools may be calling each other recursively.`, '', toolCallContext);
         }
         return { 
             string: `[System: Maximum tool calling depth reached.]`,
@@ -570,7 +611,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             // Check if error is due to abort
             if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted') || error.message?.includes('abort'))) {
                 console.log('Inference cancelled by user');
-                throw new InferError('Inference cancelled by user', '');
+                throw new AbortError('**User cancelled inference**', toolCallContext);
             }
             
             console.error(`Failed to get inference response from OpenAI: ${error}`);
@@ -777,7 +818,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             return { object: result.data, toolCallContext };
         } catch (parseError) {
             console.error('Error parsing response:', parseError);
-            throw new InferError('Failed to parse response', content);
+            throw new InferError('Failed to parse response', content, toolCallContext);
         }
     } catch (error) {
         if (error instanceof RateLimitExceededError || error instanceof SecurityError) {

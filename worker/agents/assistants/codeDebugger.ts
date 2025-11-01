@@ -18,6 +18,7 @@ import { IdGenerator } from '../utils/idGenerator';
 import { PROMPT_UTILS } from '../prompts';
 import { RuntimeError } from 'worker/services/sandbox/sandboxTypes';
 import { FileState } from '../core/state';
+import { InferError } from '../inferutils/core';
 
 const SYSTEM_PROMPT = `You are an elite autonomous code debugging specialist with deep expertise in root-cause analysis, modern web frameworks (React, Next.js, Vite), TypeScript/JavaScript, build tools, and runtime environments.
 
@@ -61,7 +62,7 @@ You are working on a **Cloudflare Workers** project (optionally with Durable Obj
 5. read_files to confirm bug exists in code before fixing
 
 ## Your Approach
-You are methodical and evidence-based. You choose your own path to solve issues, but always verify fixes work before claiming success.
+You are smart, methodical, focused and evidence-based. You choose your own path to solve issues, but always verify fixes work before claiming success.
 
 **CRITICAL - Internal Reasoning:**
 - You have advanced reasoning capabilities - USE THEM
@@ -99,8 +100,8 @@ You are methodical and evidence-based. You choose your own path to solve issues,
 **What it is:**
 - An autonomous AI agent that applies surgical fixes to code files
 - Makes minimal, targeted changes to fix specific issues
-- Returns a diff showing exactly what changed
-- Makes multiple passes (up to 5) to ensure issues are fixed
+- Returns a diff showing exactly what changed - always verify the diff matches your expectations before claiming success
+- Makes multiple passes (up to 3) to ensure issues are fixed
 - Uses intelligent SEARCH-REPLACE pattern matching internally
 
 **Parameters:**
@@ -120,6 +121,8 @@ regenerate_file({
 - **ONE PROBLEM PER ISSUE**: Don't combine multiple unrelated problems
 - **PROVIDE CONTEXT**: Explain what's broken and why it's a problem
 - **USE CONCRETE DETAILS**: Not "fix the bug" but "Fix TypeError: Cannot read property 'items' of undefined on line 45"
+- If things don't work, just directly try to share the expected diff you want to apply.
+- If it fails repeatedly, use the generate_files tool to generate the file from scratch with explicit instructions.
 
 **Good Examples:**
 \`\`\`javascript
@@ -190,7 +193,7 @@ regenerate_file({ path: "src/App.tsx", issues: ["Fix error B"] })
 - ❌ Configuration issues that need different tools
 - ❌ When you haven't read the file yet (read it first!)
 - ❌ When the same issue has already been fixed (check diff!)
-- ❌ When file is too broken to patch (use generate_files to rewrite)
+- ❌ When file is too broken to patch or regenerate_file fails repeatedly (use generate_files to rewrite)
 
 ## How to Use generate_files (For New/Broken Files)
 
@@ -208,7 +211,7 @@ regenerate_file({ path: "src/App.tsx", issues: ["Fix error B"] })
 - ✅ Scaffolding new components/utilities/API routes
 
 **When NOT to use generate_files:**
-- ❌ Use regenerate_file first for existing files with fixable issues (it's faster and more surgical)
+- ❌ Use regenerate_file first for existing files with fixable issues unless regenerate_file fails repeatedly (it's faster and more surgical)
 - ❌ Don't use for simple fixes - regenerate_file is better
 
 **Parameters:**
@@ -361,6 +364,7 @@ You're done when:
 - Be decisive - analyze internally, act externally
 - No play-by-play narration - just execute
 - Quality through internal reasoning, not verbose output
+- Always be focused on the task you were given. Don't stray into trying to fix minor issues that user didn't ask you to fix. You may suggest the user to ask about if they want them fixed, but you are only supposed to fix the issues you were originally asked to fix.
 
 - Beware: the app is running in a sandbox environment, and any changes made to it directly (e.g., via exec_commands without shouldSave=true) would be lost when the sandbox is destroyed and not persist in the app's storage.
 
@@ -586,19 +590,29 @@ If you're genuinely stuck after trying 3 different approaches, honestly report: 
             },
         }));
 
-        const result = await executeInference({
-            env: this.env,
-            context: this.inferenceContext,
-            agentActionName: 'deepDebugger',
-            modelConfig: this.modelConfigOverride || AGENT_CONFIG.deepDebugger,
-            messages,
-            tools,
-            stream: streamCb
-                ? { chunk_size: 64, onChunk: (c) => streamCb(c) }
-                : undefined,
-        });
+        let out = '';
 
-        const out = result?.string || '';
+        try {
+            const result = await executeInference({
+                env: this.env,
+                context: this.inferenceContext,
+                agentActionName: 'deepDebugger',
+                modelConfig: this.modelConfigOverride || AGENT_CONFIG.deepDebugger,
+                messages,
+                tools,
+                stream: streamCb
+                    ? { chunk_size: 64, onChunk: (c) => streamCb(c) }
+                    : undefined,
+            });
+            out = result?.string || '';
+        } catch (e) {
+            // If error is an infererror, use the partial response transcript
+            if (e instanceof InferError) {
+                out = e.partialResponseTranscript();
+            } else {
+                throw e;
+            }
+        }
         
         // Check for completion signals to prevent unnecessary continuation
         if (out.includes('TASK_COMPLETE') || out.includes('Mission accomplished') || out.includes('TASK_STUCK')) {
