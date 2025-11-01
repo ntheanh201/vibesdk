@@ -356,8 +356,11 @@ You're done when:
    - Fixes applied (file paths)
    - Verification results
    - Current state
+3. **CRITICAL: Once you write "TASK_COMPLETE", IMMEDIATELY HALT. Do NOT make any more tool calls. Your work is done.**
 
-**If stuck:** "TASK_STUCK: [reason]" + what you tried
+**If stuck:** 
+1. State: "TASK_STUCK: [reason]" + what you tried
+2. **CRITICAL: Once you write "TASK_STUCK", IMMEDIATELY HALT. Do NOT make any more tool calls. Stop immediately.**
 
 ## Working Style
 - Use your internal reasoning - think deeply, output concisely
@@ -527,7 +530,7 @@ export class DeepCodeDebugger extends Assistant<Env> {
 You just attempted to execute "${toolName}" with identical arguments for the ${this.loopDetection.repetitionWarnings}th time.
 
 RECOMMENDED ACTIONS:
-1. If your task is complete, state "TASK_COMPLETE: [summary]" and STOP
+1. If your task is complete, state "TASK_COMPLETE: [summary]" and STOP. Once you write 'TASK_COMPLETE' or 'TASK_STUCK', You shall not make any more tool/function calls.
 2. If not complete, try a DIFFERENT approach:
    - Use different tools
    - Use different arguments  

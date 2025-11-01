@@ -283,9 +283,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'conversation_state': {
-                const { state } = message;
+                if (message.type !== 'conversation_state') break;
+                const { state, deepDebugSession } = message;
                 const history: ReadonlyArray<ConversationMessage> = state?.runningHistory ?? [];
-                logger.debug('Received conversation_state with messages:', history.length, 'state:', state);
+                logger.debug('Received conversation_state with messages:', history.length, 'deepDebugSession:', deepDebugSession);
 
                 const restoredMessages: ChatMessage[] = [];
                 let currentAssistant: ChatMessage | null = null;
@@ -335,6 +336,52 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             result: text || undefined,
                             contentLength: currentAssistant.content.length,
                         });
+                    }
+                }
+
+                // Restore active debug session if one is running
+                if (deepDebugSession?.conversationId) {
+                    setIsDebugging(true);
+                    
+                    // Find if there's already a message with this conversationId
+                    const existingMessageIndex = restoredMessages.findIndex(
+                        m => m.role === 'assistant' && m.conversationId === deepDebugSession.conversationId
+                    );
+                    
+                    if (existingMessageIndex !== -1) {
+                        // Update existing message to show as active debug
+                        const existingMessage = restoredMessages[existingMessageIndex];
+                        if (!existingMessage.ui) existingMessage.ui = {};
+                        if (!existingMessage.ui.toolEvents) existingMessage.ui.toolEvents = [];
+                        
+                        const debugEventIndex = existingMessage.ui.toolEvents.findIndex(e => e.name === 'deep_debug');
+                        if (debugEventIndex === -1) {
+                            existingMessage.ui.toolEvents.push({
+                                name: 'deep_debug',
+                                status: 'start',
+                                timestamp: Date.now(),
+                                contentLength: 0
+                            });
+                        } else {
+                            existingMessage.ui.toolEvents[debugEventIndex].status = 'start';
+                            existingMessage.ui.toolEvents[debugEventIndex].contentLength = 0;
+                        }
+                    } else {
+                        // Create new placeholder message with the active conversationId
+                        const debugBubble: ChatMessage = {
+                            role: 'assistant',
+                            conversationId: deepDebugSession.conversationId,
+                            content: 'Deep debug session in progress...',
+                            ui: {
+                                toolEvents: [{
+                                    name: 'deep_debug',
+                                    status: 'start',
+                                    timestamp: Date.now(),
+                                    contentLength: 0
+                                }]
+                            }
+                        };
+                        restoredMessages.push(debugBubble);
                     }
                 }
 

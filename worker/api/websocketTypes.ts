@@ -25,6 +25,7 @@ type AgentConnectedMessage = {
 type ConversationStateMessage = {
     type: 'conversation_state';
     state: ConversationState;
+    deepDebugSession?: { conversationId: string } | null;
 };
 
 type RateLimitErrorMessage = {

@@ -91,7 +91,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     // In-memory storage for user-uploaded images (not persisted in DO state)
     private pendingUserImages: ProcessedImageAttachment[] = []
     private generationPromise: Promise<void> | null = null;
+    private currentAbortController?: AbortController;
     private deepDebugPromise: Promise<{ transcript: string } | { error: string }> | null = null;
+    private deepDebugConversationId: string | null = null;
     
     // GitHub token cache (ephemeral, lost on DO eviction)
     private githubTokenCache: {
@@ -100,7 +102,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         expiresAt: number;
     } | null = null;
     
-    private currentAbortController?: AbortController;
     
     protected operations: Operations = {
         regenerateFile: new FileRegenerationOperation(),
@@ -1151,8 +1152,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 this.logger().error('Deep debugger failed', e);
                 return { success: false as const, error: `Deep debugger failed: ${String(e)}` };
             } finally{
-                // Clear promise after completion
                 this.deepDebugPromise = null;
+                this.deepDebugConversationId = null;
             }
         })();
 
@@ -1909,6 +1910,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     isDeepDebugging(): boolean {
         return this.deepDebugPromise !== null;
     }
+    
+    getDeepDebugSessionState(): { conversationId: string } | null {
+        if (this.deepDebugConversationId && this.deepDebugPromise) {
+            return { conversationId: this.deepDebugConversationId };
+        }
+        return null;
+    }
 
     async waitForDeepDebug(): Promise<void> {
         if (this.deepDebugPromise) {
@@ -2448,6 +2456,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         isStreaming: boolean,
                         tool?: { name: string; status: 'start' | 'success' | 'error'; args?: Record<string, unknown> }
                     ) => {
+                        // Track conversationId when deep_debug starts
+                        if (tool?.name === 'deep_debug' && tool.status === 'start') {
+                            this.deepDebugConversationId = conversationId;
+                        }
+                        
                         this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
                             message,
                             conversationId,
