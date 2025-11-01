@@ -134,8 +134,8 @@ export const AGENT_CONFIG: AgentConfig = {
     deepDebugger: {
         name: AIModels.GEMINI_2_5_PRO,
         reasoning_effort: 'high',
-        max_tokens: 32000,
-        temperature: 0.2,
+        max_tokens: 8000,
+        temperature: 0.5,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
     },
     codeReview: {
