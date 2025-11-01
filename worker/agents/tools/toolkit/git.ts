@@ -14,19 +14,30 @@ interface GitToolArgs {
 export function createGitTool(
 	agent: CodingAgentInterface,
 	logger: StructuredLogger,
+	options?: { excludeCommands?: GitCommand[] }
 ): ToolDefinition<GitToolArgs, { success: boolean; data?: any; message?: string }> {
+	const allCommands: GitCommand[] = ['commit', 'log', 'show', 'reset'];
+	const allowedCommands = options?.excludeCommands
+		? allCommands.filter(cmd => !options.excludeCommands!.includes(cmd))
+		: allCommands;
+	
+	const hasReset = allowedCommands.includes('reset');
+	const commandsList = allowedCommands.join(', ');
+	const description = hasReset
+		? `Execute git commands. Commands: ${commandsList}. WARNING: reset is destructive!`
+		: `Execute git commands. Commands: ${commandsList}.`;
+
 	return {
 		type: 'function',
 		function: {
 			name: 'git',
-			description:
-				'Execute git commands. Commands: commit (save staged changes), log (view history), show (view commit details), reset (undo commits - USE WITH EXTREME CAUTION).',
+			description,
 			parameters: {
 				type: 'object',
 				properties: {
 					command: {
 						type: 'string',
-						enum: ['commit', 'log', 'show', 'reset'],
+						enum: allowedCommands,
 						description: 'Git command to execute'
 					},
 					message: {
@@ -39,7 +50,9 @@ export function createGitTool(
 					},
 					oid: {
 						type: 'string',
-						description: 'Commit hash/OID (required for show and reset commands)'
+						description: hasReset 
+							? 'Commit hash/OID (required for show and reset commands)'
+							: 'Commit hash/OID (required for show command)'
 					}
 				},
 				required: ['command'],

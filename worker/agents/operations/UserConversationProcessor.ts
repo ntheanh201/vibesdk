@@ -109,6 +109,7 @@ const SYSTEM_PROMPT = `You are Orange, the conversational AI interface for Cloud
   - queue_request: Queue modification requests for implementation in the next phase(s). Use for any feature/bug/change request.
   - get_logs: Fetch unread application logs from the sandbox to diagnose runtime issues.
   - deep_debug: Autonomous debugging assistant that investigates errors, reads files, runs commands, and applies targeted fixes. Use when users report bugs/errors that need immediate investigation and fixing. This transfers control to a specialized debugging agent. **LIMIT: You can only call deep_debug ONCE per conversation turn. If you need to debug again, ask the user first.**
+  - git: Version control operations (commit, log, show). Use to save work, view history, or inspect commits. Note: reset command not available for safety.
   - wait_for_generation: Wait for code generation to complete. Use when deep_debug returns GENERATION_IN_PROGRESS error.
   - wait_for_debug: Wait for current debug session to complete. Use when deep_debug returns DEBUG_IN_PROGRESS error.
   - deploy_preview: Redeploy or restart the preview when the user asks to deploy or the preview is blank/looping.

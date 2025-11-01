@@ -52,6 +52,8 @@ export function buildTools(
         createWaitForDebugTool(agent, logger),
         createRenameProjectTool(agent, logger),
         createAlterBlueprintTool(agent, logger),
+        // Git tool (safe version - no reset for user conversations)
+        createGitTool(agent, logger, { excludeCommands: ['reset'] }),
         // Deep autonomous debugging assistant tool
         createDeepDebuggerTool(agent, logger, toolRenderer, streamCb),
     ];

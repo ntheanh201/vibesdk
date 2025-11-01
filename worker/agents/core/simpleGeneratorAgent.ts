@@ -1299,7 +1299,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         });
     
         // Update state with completed phase
-        await this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}`);
+        await this.fileManager.saveGeneratedFiles(finalFiles, `feat: ${phase.name}\n\n${phase.description}`);
 
         this.logger().info("Files generated for phase:", phase.name, finalFiles.map(f => f.filePath));
 
