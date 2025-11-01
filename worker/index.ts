@@ -51,6 +51,11 @@ async function handleUserAppRequest(request: Request, env: Env): Promise<Respons
 	const sandboxResponse = await proxyToSandbox(request, env);
 	if (sandboxResponse) {
 		logger.info(`Serving response from sandbox for: ${hostname}`);
+        // If it was a websocket upgrade, we need to return the response as is
+        if (sandboxResponse.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+            logger.info(`Serving websocket response from sandbox for: ${hostname}`);
+            return sandboxResponse;
+        }
 		
 		// Add headers to identify this as a sandbox response
 		let headers = new Headers(sandboxResponse.headers);
