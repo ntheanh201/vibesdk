@@ -254,30 +254,61 @@ export class GitCloneService {
 
     /**
      * Handle git upload-pack request (actual clone operation)
-     * Includes all git objects to ensure template-rebased commits work correctly
+     * Only includes reachable objects from HEAD for optimal pack size
      */
     static async handleUploadPack(fs: MemFS): Promise<Uint8Array> {
         try {
-            // Collect all git objects from filesystem
-            const allObjects = new Set<string>();
+            // Collect only reachable objects from HEAD
+            const reachableObjects = new Set<string>();
             
-            const objectDirs = await fs.readdir('.git/objects');
-            for (const item of objectDirs) {
-                if (item.length === 2 && /[0-9a-f]{2}/.test(item)) {
-                    const objectFiles = await fs.readdir(`.git/objects/${item}`);
-                    for (const file of objectFiles) {
-                        if (file.length === 38 && /[0-9a-f]{38}/.test(file)) {
-                            allObjects.add(item + file);
+            // Get HEAD ref
+            const head = await git.resolveRef({ fs, dir: '/', ref: 'HEAD' });
+            reachableObjects.add(head);
+            
+            // Walk commit history
+            const commits = await git.log({ fs, dir: '/', ref: 'HEAD' });
+            
+            for (const commit of commits) {
+                // Add commit OID
+                reachableObjects.add(commit.oid);
+                
+                // Add tree OID
+                reachableObjects.add(commit.commit.tree);
+                
+                // Walk tree to get all blobs recursively
+                try {
+                    const collectTreeObjects = async (treeOid: string) => {
+                        reachableObjects.add(treeOid);
+                        const treeData = await git.readTree({ fs, dir: '/', oid: treeOid });
+                        
+                        for (const entry of treeData.tree) {
+                            reachableObjects.add(entry.oid);
+                            
+                            // If it's a tree, recurse
+                            if (entry.type === 'tree') {
+                                await collectTreeObjects(entry.oid);
+                            }
                         }
-                    }
+                    };
+                    
+                    await collectTreeObjects(commit.commit.tree);
+                } catch (error) {
+                    logger.warn('Failed to read tree for commit', { 
+                        commitOid: commit.oid, 
+                        error: error instanceof Error ? error.message : String(error)
+                    });
                 }
             }
             
-            logger.info('Generating packfile', { objectCount: allObjects.size });
+            logger.info('Generating packfile with reachable objects only', { 
+                objectCount: reachableObjects.size,
+                commitCount: commits.length 
+            });
+            
             const packResult = await git.packObjects({ 
                 fs, 
                 dir: '/', 
-                oids: Array.from(allObjects)
+                oids: Array.from(reachableObjects)
             });
             
             const packfile = packResult.packfile;
