@@ -20,6 +20,7 @@ import { createWaitTool } from './toolkit/wait';
 import { createGetRuntimeErrorsTool } from './toolkit/get-runtime-errors';
 import { createWaitForGenerationTool } from './toolkit/wait-for-generation';
 import { createWaitForDebugTool } from './toolkit/wait-for-debug';
+import { createGitTool } from './toolkit/git';
 
 export async function executeToolWithDefinition<TArgs, TResult>(
     toolDef: ToolDefinition<TArgs, TResult>,
@@ -67,6 +68,7 @@ export function buildDebugTools(session: DebugSession, logger: StructuredLogger,
     createGenerateFilesTool(session.agent, logger),
     createDeployPreviewTool(session.agent, logger),
     createWaitTool(logger),
+    createGitTool(session.agent, logger),
   ];
 
   // Attach tool renderer for UI visualization if provided

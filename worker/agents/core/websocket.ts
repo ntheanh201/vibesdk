@@ -177,8 +177,12 @@ export function handleWebSocketMessage(agent: SimpleCodeGeneratorAgent, connecti
             case WebSocketMessageRequests.GET_CONVERSATION_STATE:
                 try {
                     const state = agent.getConversationState();
+                    const debugState = agent.getDeepDebugSessionState();
                     logger.info('Conversation state retrieved', state);
-                    sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_STATE, { state });
+                    sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_STATE, { 
+                        state,
+                        deepDebugSession: debugState
+                    });
                 } catch (error) {
                     logger.error('Error fetching conversation state:', error);
                     sendError(connection, `Error fetching conversation state: ${error instanceof Error ? error.message : String(error)}`);

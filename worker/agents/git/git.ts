@@ -16,6 +16,7 @@ export interface CommitInfo {
 type FileSnapshot = Omit<FileOutputType, 'filePurpose'>;
 
 export class GitVersionControl {
+    private onFilesChangedCallback?: () => void;
     public fs: SqliteFS;
     private author: { name: string; email: string };
 
@@ -25,6 +26,20 @@ export class GitVersionControl {
         
         // Initialize SQLite table synchronously
         this.fs.init();
+    }
+
+    setOnFilesChangedCallback(callback: () => void): void {
+        this.onFilesChangedCallback = callback;
+    }
+
+    async getAllFilesFromHead(): Promise<Array<{ filePath: string; fileContents: string }>> {
+        try {
+            const oid = await git.resolveRef({ fs: this.fs, dir: '/', ref: 'HEAD' });
+            const files = await this.readFilesFromCommit(oid);
+            return files;
+        } catch (error) {
+            return [];
+        }
     }
 
     async init(): Promise<void> {
@@ -41,10 +56,17 @@ export class GitVersionControl {
         }
     }
 
-    async commit(files: FileSnapshot[], message?: string): Promise<string | null> {
-        if (!files.length) throw new Error('Cannot create empty commit');
+    /**
+     * Stage files without committing them
+     * Useful for batching multiple operations before a single commit
+     */
+    async stage(files: FileSnapshot[]): Promise<void> {
+        if (!files.length) {
+            console.log('[Git] No files to stage');
+            return;
+        }
 
-        console.log(`[Git] Starting commit with ${files.length} files`);
+        console.log(`[Git] Staging ${files.length} files`);
 
         // Normalize paths (remove leading slashes for git)
         const normalizedFiles = files.map(f => ({
@@ -52,13 +74,16 @@ export class GitVersionControl {
             content: f.fileContents
         }));
 
-        // Write and stage files first
+        // Write and stage files
         for (let i = 0; i < normalizedFiles.length; i++) {
             const file = normalizedFiles[i];
             try {
-                console.log(`[Git] Processing file ${i + 1}/${normalizedFiles.length}: ${file.path}`);
+                console.log(`[Git] Staging file ${i + 1}/${normalizedFiles.length}: ${file.path}`);
+                
+                // Write file to filesystem
                 await this.fs.writeFile(file.path, file.content);
                 
+                // Stage file using git.add
                 await git.add({ 
                     fs: this.fs, 
                     dir: '/', 
@@ -71,6 +96,16 @@ export class GitVersionControl {
                 console.error(`[Git] Failed to stage file ${file.path}:`, error);
                 throw new Error(`Failed to stage file ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
             }
+        }
+
+        console.log(`[Git] Successfully staged ${files.length} files`);
+    }
+
+    async commit(files: FileSnapshot[], message?: string): Promise<string | null> {
+        console.log(`[Git] Starting commit with ${files.length} files`);
+        if (files.length) {
+            // Stage all files first
+            await this.stage(files);
         }
 
         console.log('[Git] All files written and staged, checking for changes...');
@@ -123,11 +158,42 @@ export class GitVersionControl {
         }
     }
 
-    async checkout(oid: string): Promise<FileSnapshot[]> {
+    private async readFilesFromCommit(oid: string): Promise<FileSnapshot[]> {
         const { commit } = await git.readCommit({ fs: this.fs, dir: '/', oid });
         const files: FileSnapshot[] = [];
         await this.walkTree(commit.tree, '', files);
         return files;
+    }
+
+    async show(oid: string): Promise<{ oid: string; message: string; author: string; timestamp: string; files: number; fileList: string[] }> {
+        const { commit } = await git.readCommit({ fs: this.fs, dir: '/', oid });
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: oid });
+        
+        return {
+            oid,
+            message: commit.message,
+            author: `${commit.author.name} <${commit.author.email}>`,
+            timestamp: new Date(commit.author.timestamp * 1000).toISOString(),
+            files: files.length,
+            fileList: files
+        };
+    }
+
+    async reset(ref: string, options?: { hard?: boolean }): Promise<{ ref: string; filesReset: number }> {
+        // Update HEAD to point to the specified ref
+        const oid = await git.resolveRef({ fs: this.fs, dir: '/', ref });
+        await git.writeRef({ fs: this.fs, dir: '/', ref: 'HEAD', value: oid, force: true });
+        
+        // If hard reset, also update working directory
+        if (options?.hard !== false) {
+            await git.checkout({ fs: this.fs, dir: '/', ref, force: true });
+        }
+        
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref });
+        
+        this.onFilesChangedCallback?.();
+        
+        return { ref, filesReset: files.length };
     }
 
     private async walkTree(treeOid: string, prefix: string, files: FileSnapshot[]): Promise<void> {

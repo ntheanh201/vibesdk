@@ -6,9 +6,12 @@ import { OperationOptions } from "worker/agents/operations/common";
 import { DeepDebugResult } from "worker/agents/core/types";
 import { RenderToolCall } from "worker/agents/operations/UserConversationProcessor";
 import { WebSocketMessageType, WebSocketMessageData } from "worker/api/websocketTypes";
+import { GitVersionControl } from "worker/agents/git/git";
 
 export abstract class ICodingAgent {
     abstract getSandboxServiceClient(): BaseSandboxService;
+
+    abstract getGit(): GitVersionControl;
 
     abstract deployToSandbox(files: FileOutputType[], redeploy: boolean, commitMessage?: string, clearLogs?: boolean): Promise<PreviewType | null>;
 
