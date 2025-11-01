@@ -36,8 +36,6 @@ import {
 import { 
     createAssetManifest 
 } from '../deployer/utils/index';
-import { CodeFixResult, fixProjectIssues } from '../code-fixer';
-import { FileObject } from '../code-fixer/types';
 import { generateId } from '../../utils/idGenerator';
 import { ResourceProvisioner } from './resourceProvisioner';
 import { TemplateParser } from './templateParser';
@@ -1319,6 +1317,7 @@ export class SandboxSdkClient extends BaseSandboxService {
 
             // If code files were modified, touch vite.config.ts to trigger a rebuild
             if (successCount > 0 && filteredFiles.some(file => file.filePath.endsWith('.ts') || file.filePath.endsWith('.tsx'))) {
+                this.logger.info('Touching vite.config.ts to trigger rebuild');
                 await session.exec(`touch vite.config.ts`);
             }
 
@@ -1768,43 +1767,6 @@ export class SandboxSdkClient extends BaseSandboxService {
                 lint: { issues: [] },
                 typecheck: { issues: [] },
                 error: `Failed to run analysis: ${error instanceof Error ? error.message : 'Unknown error'}`
-            };
-        }
-    }
-
-    // Development utility method for fixing code issues
-    async fixCodeIssues(instanceId: string, allFiles?: FileObject[]): Promise<CodeFixResult> {
-        try {
-            this.logger.info(`Fixing code issues for ${instanceId}`);
-            // First run static analysis
-            const analysisResult = await this.runStaticAnalysisCode(instanceId);
-            this.logger.info(`Static analysis completed for ${instanceId}`);
-            // Then get all the files
-            const files = allFiles || (await this.getFiles(instanceId)).files;
-            this.logger.info(`Files retrieved for ${instanceId}`);
-            
-            // Create file fetcher callback
-            const session = await this.getInstanceSession(instanceId);
-            // Use the new functional API
-            const fixResult = fixProjectIssues(
-                files.map(file => ({
-                    filePath: file.filePath,
-                    fileContents: file.fileContents,
-                    filePurpose: ''
-                })),
-                analysisResult.typecheck.issues,
-            );
-            for (const file of fixResult.modifiedFiles) {
-                await session.writeFile(`/workspace/${instanceId}/${file.filePath}`, file.fileContents);
-            }
-            this.logger.info(`Code fix completed for ${instanceId}`);
-            return fixResult;
-        } catch (error) {
-            this.logger.error('fixCodeIssues', error, { instanceId });
-            return {
-                fixedIssues: [],
-                unfixableIssues: [],
-                modifiedFiles: []
             };
         }
     }

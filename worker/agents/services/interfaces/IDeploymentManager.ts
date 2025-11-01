@@ -31,6 +31,7 @@ export interface DeploymentParams {
     redeploy: boolean;
     commitMessage?: string;
     clearLogs?: boolean;
+    clearRuntimeErrors?: boolean;
 }
 
 /**
