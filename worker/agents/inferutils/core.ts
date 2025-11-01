@@ -22,7 +22,7 @@ import { getUserConfigurableSettings } from '../../config';
 import { SecurityError, RateLimitExceededError } from 'shared/types/errors';
 import { executeToolWithDefinition } from '../tools/customTools';
 import { RateLimitType } from 'worker/services/rate-limit/config';
-import { MAX_LLM_MESSAGES, MAX_TOOL_CALLING_DEPTH } from '../constants';
+import { getMaxToolCallingDepth, MAX_LLM_MESSAGES } from '../constants';
 
 function optimizeInputs(messages: Message[]): Message[] {
     return messages.map((message) => ({
@@ -382,7 +382,7 @@ export class InferError extends Error {
 
 export class AbortError extends InferError {
     constructor(response: string, toolCallContext?: ToolCallContext) {
-        super('Inference cancelled by user', response, toolCallContext);
+        super(response, response, toolCallContext);
         this.name = 'AbortError';
     }
 }
@@ -483,11 +483,11 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
     
     // Check tool calling depth to prevent infinite recursion
     const currentDepth = toolCallContext?.depth ?? 0;
-    if (currentDepth >= MAX_TOOL_CALLING_DEPTH && actionKey !== 'deepDebugger') {
-        console.warn(`Tool calling depth limit reached (${currentDepth}/${MAX_TOOL_CALLING_DEPTH}). Stopping recursion.`);
+    if (currentDepth >= getMaxToolCallingDepth(actionKey)) {
+        console.warn(`Tool calling depth limit reached (${currentDepth}/${getMaxToolCallingDepth(actionKey)}). Stopping recursion.`);
         // Return a response indicating max depth reached
         if (schema) {
-            throw new InferError(`Maximum tool calling depth (${MAX_TOOL_CALLING_DEPTH}) exceeded. Tools may be calling each other recursively.`, '', toolCallContext);
+            throw new AbortError(`Maximum tool calling depth (${getMaxToolCallingDepth(actionKey)}) exceeded. Tools may be calling each other recursively.`, toolCallContext);
         }
         return { 
             string: `[System: Maximum tool calling depth reached.]`,
@@ -751,7 +751,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             };
             
             const executedCallsWithResults = executedToolCalls.filter(result => result.result);
-            console.log(`Tool calling depth: ${newDepth}/${MAX_TOOL_CALLING_DEPTH}`);
+            console.log(`${actionKey}: Tool calling depth: ${newDepth}/${getMaxToolCallingDepth(actionKey)}`);
             
             if (executedCallsWithResults.length) {
                 if (schema && schemaName) {
