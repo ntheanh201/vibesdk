@@ -38,12 +38,12 @@ export class FileManager implements IFileManager {
         return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
-    async saveGeneratedFile(file: FileOutputType, commitMessage: string): Promise<FileState> {
+    async saveGeneratedFile(file: FileOutputType, commitMessage?: string): Promise<FileState> {
         const results = await this.saveGeneratedFiles([file], commitMessage);
         return results[0];
     }
 
-    async saveGeneratedFiles(files: FileOutputType[], commitMessage: string): Promise<FileState[]> {
+    async saveGeneratedFiles(files: FileOutputType[], commitMessage?: string): Promise<FileState[]> {
         const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
         
@@ -82,9 +82,16 @@ export class FileManager implements IFileManager {
         try {
             const shouldCommit = fileStates.length > 0 && fileStates.some(fileState => fileState.lastDiff !== '');
             if (shouldCommit) {
-                console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
-                await this.git.commit(fileStates, commitMessage);
-                console.log(`[FileManager] Commit successful`);
+                // If commit message is available, commit, else stage
+                if (commitMessage) {
+                    console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
+                    await this.git.commit(fileStates, commitMessage);
+                    console.log(`[FileManager] Commit successful`);
+                } else {
+                    console.log(`[FileManager] Staging ${fileStates.length} files`);
+                    await this.git.stage(fileStates);
+                    console.log(`[FileManager] Stage successful`);
+                }
             }
         } catch (error) {
             console.error(`[FileManager] Failed to commit files:`, error, commitMessage);

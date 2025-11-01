@@ -623,6 +623,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.deploymentManager.getClient();
     }
 
+    getGit(): GitVersionControl {
+        return this.git;
+    }
+
     isCodeGenerating(): boolean {
         return this.generationPromise !== null;
     }
@@ -1411,33 +1415,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
-    /**
-     * Regenerate a file to fix identified issues
-     * Retries up to 3 times before giving up
-     */
-    async regenerateFile(file: FileOutputType, issues: string[], retryIndex: number = 0) {
-        this.broadcast(WebSocketMessageResponses.FILE_REGENERATING, {
-            message: `Regenerating file: ${file.filePath}`,
-            filePath: file.filePath,
-            original_issues: issues,
-        });
-        
-        const result = await this.operations.regenerateFile.execute(
-            {file, issues, retryIndex},
-            this.getOperationOptions()
-        );
-
-        const fileState = await this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
-
-        this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
-            message: `Regenerated file: ${file.filePath}`,
-            file: fileState,
-            original_issues: issues,
-        });
-        
-        return fileState;
-    }
-
     getTotalFiles(): number {
         return this.fileManager.getGeneratedFilePaths().length + ((this.state.currentPhase || this.state.blueprint.initialPhase)?.files?.length || 0);
     }
@@ -1727,6 +1704,33 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.saveExecutedCommands(commands);
         }
         return result;
+    }
+
+    /**
+     * Regenerate a file to fix identified issues
+     * Retries up to 3 times before giving up
+     */
+    async regenerateFile(file: FileOutputType, issues: string[], retryIndex: number = 0) {
+        this.broadcast(WebSocketMessageResponses.FILE_REGENERATING, {
+            message: `Regenerating file: ${file.filePath}`,
+            filePath: file.filePath,
+            original_issues: issues,
+        });
+        
+        const result = await this.operations.regenerateFile.execute(
+            {file, issues, retryIndex},
+            this.getOperationOptions()
+        );
+
+        const fileState = await this.fileManager.saveGeneratedFile(result);
+
+        this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
+            message: `Regenerated file: ${file.filePath}`,
+            file: fileState,
+            original_issues: issues,
+        });
+        
+        return fileState;
     }
 
     async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }> {

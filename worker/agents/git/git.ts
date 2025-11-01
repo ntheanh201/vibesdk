@@ -41,10 +41,17 @@ export class GitVersionControl {
         }
     }
 
-    async commit(files: FileSnapshot[], message?: string): Promise<string | null> {
-        if (!files.length) throw new Error('Cannot create empty commit');
+    /**
+     * Stage files without committing them
+     * Useful for batching multiple operations before a single commit
+     */
+    async stage(files: FileSnapshot[]): Promise<void> {
+        if (!files.length) {
+            console.log('[Git] No files to stage');
+            return;
+        }
 
-        console.log(`[Git] Starting commit with ${files.length} files`);
+        console.log(`[Git] Staging ${files.length} files`);
 
         // Normalize paths (remove leading slashes for git)
         const normalizedFiles = files.map(f => ({
@@ -52,13 +59,16 @@ export class GitVersionControl {
             content: f.fileContents
         }));
 
-        // Write and stage files first
+        // Write and stage files
         for (let i = 0; i < normalizedFiles.length; i++) {
             const file = normalizedFiles[i];
             try {
-                console.log(`[Git] Processing file ${i + 1}/${normalizedFiles.length}: ${file.path}`);
+                console.log(`[Git] Staging file ${i + 1}/${normalizedFiles.length}: ${file.path}`);
+                
+                // Write file to filesystem
                 await this.fs.writeFile(file.path, file.content);
                 
+                // Stage file using git.add
                 await git.add({ 
                     fs: this.fs, 
                     dir: '/', 
@@ -71,6 +81,16 @@ export class GitVersionControl {
                 console.error(`[Git] Failed to stage file ${file.path}:`, error);
                 throw new Error(`Failed to stage file ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
             }
+        }
+
+        console.log(`[Git] Successfully staged ${files.length} files`);
+    }
+
+    async commit(files: FileSnapshot[], message?: string): Promise<string | null> {
+        console.log(`[Git] Starting commit with ${files.length} files`);
+        if (files.length) {
+            // Stage all files first
+            await this.stage(files);
         }
 
         console.log('[Git] All files written and staged, checking for changes...');
@@ -128,6 +148,59 @@ export class GitVersionControl {
         const files: FileSnapshot[] = [];
         await this.walkTree(commit.tree, '', files);
         return files;
+    }
+
+    async show(oid: string): Promise<{ oid: string; message: string; author: string; timestamp: string; files: number; fileList: string[] }> {
+        const { commit } = await git.readCommit({ fs: this.fs, dir: '/', oid });
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: oid });
+        
+        return {
+            oid,
+            message: commit.message,
+            author: `${commit.author.name} <${commit.author.email}>`,
+            timestamp: new Date(commit.author.timestamp * 1000).toISOString(),
+            files: files.length,
+            fileList: files
+        };
+    }
+
+    async restoreCommit(oid: string): Promise<{ oid: string; filesRestored: number }> {
+        // Use git.checkout to restore files from commit and stage them
+        // noUpdateHead=true keeps us on current branch, force=true overwrites working directory
+        await git.checkout({ fs: this.fs, dir: '/', ref: oid, noUpdateHead: true, force: true });
+        
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: oid });
+        return { oid, filesRestored: files.length };
+    }
+
+    async revert(oid: string): Promise<{ revertedCommit: string; revertCommit: string | null; filesReverted: number }> {
+        const commits = await this.log(50);
+        const commitToRevert = commits.find(c => c.oid === oid);
+        
+        if (!commitToRevert) {
+            throw new Error(`Commit ${oid} not found`);
+        }
+        
+        const commitIndex = commits.findIndex(c => c.oid === oid);
+        const parentCommit = commits[commitIndex + 1];
+        
+        if (!parentCommit) {
+            throw new Error(`Cannot revert ${oid} - no parent commit found`);
+        }
+        
+        // Restore files from parent commit (before the bad commit)
+        await git.checkout({ fs: this.fs, dir: '/', ref: parentCommit.oid, noUpdateHead: true, force: true });
+        
+        const files = await git.listFiles({ fs: this.fs, dir: '/', ref: parentCommit.oid });
+        
+        // Create a revert commit
+        const revertOid = await this.commit([], `Revert "${commitToRevert.message}"\n\nThis reverts commit ${commitToRevert.oid}.`);
+        
+        return {
+            revertedCommit: commitToRevert.oid,
+            revertCommit: revertOid,
+            filesReverted: files.length
+        };
     }
 
     private async walkTree(treeOid: string, prefix: string, files: FileSnapshot[]): Promise<void> {
