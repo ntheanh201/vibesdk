@@ -44,6 +44,9 @@ export interface HandleMessageDeps {
     setIsGenerationPaused: React.Dispatch<React.SetStateAction<boolean>>;
     setIsGenerating: React.Dispatch<React.SetStateAction<boolean>>;
     setIsPhaseProgressActive: React.Dispatch<React.SetStateAction<boolean>>;
+    setRuntimeErrorCount: React.Dispatch<React.SetStateAction<number>>;
+    setStaticIssueCount: React.Dispatch<React.SetStateAction<number>>;
+    setIsDebugging: React.Dispatch<React.SetStateAction<boolean>>;
     
     // Current state
     isInitialStateRestored: boolean;
@@ -79,9 +82,6 @@ export interface HandleMessageDeps {
 }
 
 export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
-    // Track review lifecycle within this handler instance
-    let lastReviewIssueCount = 0;
-    let reviewStartAnnounced = false;
     const extractTextContent = (content: ConversationMessage['content']): string => {
         if (!content) return '';
         if (typeof content === 'string') return content;
@@ -114,6 +114,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             setIsGenerationPaused,
             setIsGenerating,
             setIsPhaseProgressActive,
+            setIsDebugging,
             isInitialStateRestored,
             blueprint,
             query,
@@ -243,7 +244,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     
                     if (state.generatedFilesMap && Object.keys(state.generatedFilesMap).length > 0) {
                         updateStage('code', { status: 'completed' });
-                        updateStage('validate', { status: 'completed' });
                         if (urlChatId !== 'new') {
                             logger.debug('🚀 Requesting preview deployment for existing chat with files');
                             sendWebSocketMessage(websocket, 'preview');
@@ -269,7 +269,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     if (codeStage?.status === 'active' && !isGenerating) {
                         if (state.generatedFilesMap && Object.keys(state.generatedFilesMap).length > 0) {
                             updateStage('code', { status: 'completed' });
-                            updateStage('validate', { status: 'completed' });
 
                             if (!previewUrl) {
                                 logger.debug('🚀 Generated files exist but no preview URL - auto-deploying preview');
@@ -284,9 +283,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'conversation_state': {
-                const { state } = message;
+                if (message.type !== 'conversation_state') break;
+                const { state, deepDebugSession } = message;
                 const history: ReadonlyArray<ConversationMessage> = state?.runningHistory ?? [];
-                logger.debug('Received conversation_state with messages:', history.length, 'state:', state);
+                logger.debug('Received conversation_state with messages:', history.length, 'deepDebugSession:', deepDebugSession);
 
                 const restoredMessages: ChatMessage[] = [];
                 let currentAssistant: ChatMessage | null = null;
@@ -339,6 +339,52 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     }
                 }
 
+                // Restore active debug session if one is running
+                if (deepDebugSession?.conversationId) {
+                    setIsDebugging(true);
+                    
+                    // Find if there's already a message with this conversationId
+                    const existingMessageIndex = restoredMessages.findIndex(
+                        m => m.role === 'assistant' && m.conversationId === deepDebugSession.conversationId
+                    );
+                    
+                    if (existingMessageIndex !== -1) {
+                        // Update existing message to show as active debug
+                        const existingMessage = restoredMessages[existingMessageIndex];
+                        if (!existingMessage.ui) existingMessage.ui = {};
+                        if (!existingMessage.ui.toolEvents) existingMessage.ui.toolEvents = [];
+                        
+                        const debugEventIndex = existingMessage.ui.toolEvents.findIndex(e => e.name === 'deep_debug');
+                        if (debugEventIndex === -1) {
+                            existingMessage.ui.toolEvents.push({
+                                name: 'deep_debug',
+                                status: 'start',
+                                timestamp: Date.now(),
+                                contentLength: 0
+                            });
+                        } else {
+                            existingMessage.ui.toolEvents[debugEventIndex].status = 'start';
+                            existingMessage.ui.toolEvents[debugEventIndex].contentLength = 0;
+                        }
+                    } else {
+                        // Create new placeholder message with the active conversationId
+                        const debugBubble: ChatMessage = {
+                            role: 'assistant',
+                            conversationId: deepDebugSession.conversationId,
+                            content: 'Deep debug session in progress...',
+                            ui: {
+                                toolEvents: [{
+                                    name: 'deep_debug',
+                                    status: 'start',
+                                    timestamp: Date.now(),
+                                    contentLength: 0
+                                }]
+                            }
+                        };
+                        restoredMessages.push(debugBubble);
+                    }
+                }
+
                 if (restoredMessages.length > 0) {
                     // Deduplicate assistant messages with identical content (even if separated by tool messages)
                     const deduplicated = deduplicateMessages(restoredMessages);
@@ -346,6 +392,8 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     logger.debug('Merging conversation_state with', deduplicated.length, 'messages (', restoredMessages.length - deduplicated.length, 'duplicates removed)');
                     setMessages(prev => {
                         const hasFetching = prev.some(m => m.role === 'assistant' && m.conversationId === 'fetching-chat');
+                        const hasReconnect = prev.some(m => m.role === 'assistant' && m.conversationId === 'websocket_reconnected');
+                        
                         if (hasFetching) {
                             const next = appendToolEvent(prev, 'fetching-chat', { 
                                 name: 'fetching your latest conversations', 
@@ -353,6 +401,12 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             });
                             return [...next, ...deduplicated];
                         }
+                        
+                        if (hasReconnect) {
+                            // Preserve reconnect message on top when restoring state after reconnect
+                            return [...prev, ...deduplicated];
+                        }
+                        
                         return deduplicated;
                     });
                 }
@@ -395,8 +449,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'file_regenerating': {
                 setFiles((prev) => setFileGenerating(prev, message.filePath, 'File being regenerated...'));
                 setPhaseTimeline((prev) => updatePhaseFileStatus(prev, message.filePath, 'generating'));
-                // Activates fixing stage only when actual regenerations begin
-                updateStage('fix', { status: 'active', metadata: lastReviewIssueCount > 0 ? `Fixing ${lastReviewIssueCount} issues` : 'Fixing issues' });
                 break;
             }
 
@@ -404,18 +456,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 updateStage('code', { status: 'active' });
                 setTotalFiles(message.totalFiles);
                 setIsGenerating(true);
-                // Reset review tracking for a new generation run
-                lastReviewIssueCount = 0;
-                reviewStartAnnounced = false;
                 break;
             }
 
             case 'generation_complete': {
                 setIsRedeployReady(true);
                 setFiles((prev) => setAllFilesCompleted(prev));
-                setProjectStages((prev) => completeStages(prev, ['code', 'validate', 'fix']));
-                // Ensure fix stage metadata is cleared on final completion
-                updateStage('fix', { status: 'completed', metadata: undefined });
+                setProjectStages((prev) => completeStages(prev, ['code']));
 
                 sendMessage(createAIMessage('generation-complete', 'Code generation has been completed.'));
                 
@@ -448,8 +495,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 const totalIssues = reviewData?.filesToFix?.reduce((count: number, file: any) =>
                     count + file.issues.length, 0) || 0;
 
-                lastReviewIssueCount = totalIssues;
-
                 let reviewMessage = 'Code review complete';
                 if (reviewData?.issuesFound) {
                     reviewMessage = `Code review complete - ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} found across ${reviewData.filesToFix?.length || 0} file${reviewData.filesToFix?.length !== 1 ? 's' : ''}`;
@@ -457,14 +502,15 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     reviewMessage = 'Code review complete - no issues found';
                 }
 
-                // Mark validation as completed at the end of review
-                updateStage('validate', { status: 'completed' });
                 sendMessage(createAIMessage('code_reviewed', reviewMessage));
                 break;
             }
 
             case 'runtime_error_found': {
                 logger.info('Runtime error found in sandbox', message.errors);
+                
+                // Update runtime error count
+                deps.setRuntimeErrorCount(message.count || message.errors?.length || 0);
                 
                 onDebugMessage?.('error', 
                     `Runtime Error (${message.count} errors)`,
@@ -475,23 +521,17 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'code_reviewing': {
-                const totalIssues =
-                    (message.staticAnalysis?.lint?.issues?.length || 0) +
-                    (message.staticAnalysis?.typecheck?.issues?.length || 0) +
-                    (message.runtimeErrors.length || 0);
+                const lintIssues = message.staticAnalysis?.lint?.issues?.length || 0;
+                const typecheckIssues = message.staticAnalysis?.typecheck?.issues?.length || 0;
+                const runtimeErrors = message.runtimeErrors?.length || 0;
+                const totalIssues = lintIssues + typecheckIssues + runtimeErrors;
 
-                lastReviewIssueCount = totalIssues;
+                // Update issue counts
+                deps.setStaticIssueCount(lintIssues + typecheckIssues);
+                deps.setRuntimeErrorCount(runtimeErrors);
 
-                // Announce review start once, right after main code gen
-                if (!reviewStartAnnounced) {
-                    sendMessage(createAIMessage('review_start', 'App generation complete, now reviewing code indepth'));
-                    reviewStartAnnounced = true;
-                }
-
-                // Only show reviewing as active; do not activate fix until regeneration actually starts
-                updateStage('validate', { status: 'active' });
-                // Show identified issues count while review runs, but keep fix stage pending
-                updateStage('fix', { status: 'pending', metadata: totalIssues > 0 ? `Identified ${totalIssues} issues` : undefined });
+                // Show review start message
+                sendMessage(createAIMessage('review_start', 'App generation complete, now reviewing code indepth'));
 
                 if (totalIssues > 0) {
                     const errorDetails = [
@@ -510,8 +550,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'phase_generating': {
-                updateStage('validate', { status: 'completed' });
-                updateStage('fix', { status: 'completed', metadata: undefined });
                 sendMessage(createAIMessage('phase_generating', message.message));
                 setIsThinking(true);
                 setIsPhaseProgressActive(true);
@@ -559,7 +597,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'phase_validating': {
                 sendMessage(createAIMessage('phase_validating', message.message));
-                updateStage('validate', { status: 'active' });
                 
                 setPhaseTimeline(prev => {
                     const updated = [...prev];
@@ -577,7 +614,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'phase_validated': {
                 sendMessage(createAIMessage('phase_validated', message.message));
-                updateStage('validate', { status: 'completed' });
                 break;
             }
 
@@ -599,10 +635,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         }
                         return updated;
                     });
-
-                    if (message.phase.name === 'Finalization and Review') {
-                        sendMessage(createAIMessage('core_app_complete', 'Main app generation completed. Doing code cleanups and resolving any lingering issues. Meanwhile, feel free to ask me anything!'));
-                    }
                 }
 
                 logger.debug('🔄 Scheduling preview refresh in 1 second after deployment completion');
@@ -634,6 +666,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'generation_stopped': {
                 setIsGenerating(false);
                 setIsGenerationPaused(true);
+                setIsDebugging(false);
                 
                 // Reset phase indicators
                 setIsPhaseProgressActive(false);

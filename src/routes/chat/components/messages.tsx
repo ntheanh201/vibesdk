@@ -6,7 +6,8 @@ import rehypeExternalLinks from 'rehype-external-links';
 import { LoaderCircle, Check, AlertTriangle, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import type { ToolEvent } from '../utils/message-helpers';
 import type { ConversationMessage } from '@/api-types';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { DebugSessionBubble } from './debug-session-bubble';
 
 /**
  * Strip internal system tags that should not be displayed to users
@@ -84,7 +85,7 @@ function convertToToolEvent(msg: ConversationMessage, idx: number): ToolEvent | 
 	};
 }
 
-function MessageContentRenderer({ 
+export function MessageContentRenderer({ 
 	content, 
 	toolEvents = [] 
 }: { 
@@ -181,7 +182,7 @@ function ToolResultRenderer({ result, toolName }: { result: string; toolName: st
 	}
 }
 
-function ToolStatusIndicator({ event }: { event: ToolEvent }) {
+export function ToolStatusIndicator({ event }: { event: ToolEvent }) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const hasResult = event.status === 'success' && event.result;
 	const isDeepDebug = event.name === 'deep_debug';
@@ -269,6 +270,66 @@ export function AIMessage({
 	toolEvents?: ToolEvent[];
 }) {
 	const sanitizedMessage = sanitizeMessageForDisplay(message);
+	
+	// Check if this is a debug session (active or just completed in this session)
+	const debugEvent = toolEvents.find(ev => ev.name === 'deep_debug');
+	const isActiveDebug = debugEvent?.status === 'start';
+	const isCompletedDebug = debugEvent?.status === 'success' || debugEvent?.status === 'error';
+	
+	// Check if this is a live session with actual content
+	const hasInlineEvents = toolEvents.some(ev => ev.contentLength !== undefined);
+	const hasToolCalls = toolEvents.some(ev => ev.name !== 'deep_debug');
+	
+	// Only show bubble if: actively debugging OR (completed/errored with actual content/tool calls and inline events)
+	const isLiveDebugSession = debugEvent && (
+		isActiveDebug || 
+		(isCompletedDebug && hasInlineEvents && hasToolCalls)
+	);
+	
+	// Calculate elapsed time for active debug sessions
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
+	const startTimeRef = useRef<number | null>(null);
+	
+	useEffect(() => {
+		if (!isActiveDebug) {
+			startTimeRef.current = null;
+			setElapsedSeconds(0);
+			return;
+		}
+		
+		if (!startTimeRef.current) {
+			startTimeRef.current = Date.now();
+		}
+		
+		const interval = setInterval(() => {
+			if (startTimeRef.current) {
+				const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+				setElapsedSeconds(elapsed);
+			}
+		}, 1000);
+		
+		return () => clearInterval(interval);
+	}, [isActiveDebug]);
+	
+	// Render debug bubble for live debug sessions (active or just completed)
+	// Don't show for old messages after page refresh (no inline events)
+	if (isLiveDebugSession) {
+		const toolCallCount = toolEvents.filter(e => e.name !== 'deep_debug').length;
+		
+		return (
+			<DebugSessionBubble
+				message={{
+					conversationId: 'debug-session',
+					role: 'assistant' as const,
+					content: sanitizedMessage,
+					ui: { toolEvents }
+				}}
+				isActive={isActiveDebug}
+				elapsedSeconds={elapsedSeconds}
+				toolCallCount={toolCallCount}
+			/>
+		);
+	}
 	
 	// Separate: events without contentLength = top (restored), with contentLength = inline (streaming)
 	const topToolEvents = toolEvents.filter(ev => ev.contentLength === undefined);

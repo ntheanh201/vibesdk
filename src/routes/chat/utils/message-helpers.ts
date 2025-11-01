@@ -28,7 +28,6 @@ export function isConversationalMessage(messageId: string): boolean {
         'conversation_response',
         'fetching-chat',
         'chat-not-found',
-        'resuming-chat',
         'chat-welcome',
         'deployment-status',
         'code_reviewed',

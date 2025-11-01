@@ -56,6 +56,10 @@ export class CodingAgentInterface {
         return this.agentStub.getOperationOptions();
     }
 
+    getGit() {
+        return this.agentStub.getGit();
+    }
+
     updateProjectName(newName: string): Promise<boolean> {
         return this.agentStub.updateProjectName(newName);
     }

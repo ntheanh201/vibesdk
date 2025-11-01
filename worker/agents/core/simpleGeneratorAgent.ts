@@ -91,7 +91,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
     // In-memory storage for user-uploaded images (not persisted in DO state)
     private pendingUserImages: ProcessedImageAttachment[] = []
     private generationPromise: Promise<void> | null = null;
+    private currentAbortController?: AbortController;
     private deepDebugPromise: Promise<{ transcript: string } | { error: string }> | null = null;
+    private deepDebugConversationId: string | null = null;
     
     // GitHub token cache (ephemeral, lost on DO eviction)
     private githubTokenCache: {
@@ -100,7 +102,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         expiresAt: number;
     } | null = null;
     
-    private currentAbortController?: AbortController;
     
     protected operations: Operations = {
         regenerateFile: new FileRegenerationOperation(),
@@ -620,6 +621,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     getSandboxServiceClient(): BaseSandboxService {
         return this.deploymentManager.getClient();
+    }
+
+    getGit(): GitVersionControl {
+        return this.git;
     }
 
     isCodeGenerating(): boolean {
@@ -1151,8 +1156,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 this.logger().error('Deep debugger failed', e);
                 return { success: false as const, error: `Deep debugger failed: ${String(e)}` };
             } finally{
-                // Clear promise after completion
                 this.deepDebugPromise = null;
+                this.deepDebugConversationId = null;
             }
         })();
 
@@ -1408,33 +1413,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().error('Error fetching model configs info:', error);
             throw error;
         }
-    }
-
-    /**
-     * Regenerate a file to fix identified issues
-     * Retries up to 3 times before giving up
-     */
-    async regenerateFile(file: FileOutputType, issues: string[], retryIndex: number = 0) {
-        this.broadcast(WebSocketMessageResponses.FILE_REGENERATING, {
-            message: `Regenerating file: ${file.filePath}`,
-            filePath: file.filePath,
-            original_issues: issues,
-        });
-        
-        const result = await this.operations.regenerateFile.execute(
-            {file, issues, retryIndex},
-            this.getOperationOptions()
-        );
-
-        const fileState = await this.fileManager.saveGeneratedFile(result, `fix: ${file.filePath}`);
-
-        this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
-            message: `Regenerated file: ${file.filePath}`,
-            file: fileState,
-            original_issues: issues,
-        });
-        
-        return fileState;
     }
 
     getTotalFiles(): number {
@@ -1728,6 +1706,33 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return result;
     }
 
+    /**
+     * Regenerate a file to fix identified issues
+     * Retries up to 3 times before giving up
+     */
+    async regenerateFile(file: FileOutputType, issues: string[], retryIndex: number = 0) {
+        this.broadcast(WebSocketMessageResponses.FILE_REGENERATING, {
+            message: `Regenerating file: ${file.filePath}`,
+            filePath: file.filePath,
+            original_issues: issues,
+        });
+        
+        const result = await this.operations.regenerateFile.execute(
+            {file, issues, retryIndex},
+            this.getOperationOptions()
+        );
+
+        const fileState = await this.fileManager.saveGeneratedFile(result);
+
+        this.broadcast(WebSocketMessageResponses.FILE_REGENERATED, {
+            message: `Regenerated file: ${file.filePath}`,
+            file: fileState,
+            original_issues: issues,
+        });
+        
+        return fileState;
+    }
+
     async regenerateFileByPath(path: string, issues: string[]): Promise<{ path: string; diff: string }> {
         const { sandboxInstanceId } = this.state;
         if (!sandboxInstanceId) {
@@ -1908,6 +1913,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     isDeepDebugging(): boolean {
         return this.deepDebugPromise !== null;
+    }
+    
+    getDeepDebugSessionState(): { conversationId: string } | null {
+        if (this.deepDebugConversationId && this.deepDebugPromise) {
+            return { conversationId: this.deepDebugConversationId };
+        }
+        return null;
     }
 
     async waitForDeepDebug(): Promise<void> {
@@ -2216,7 +2228,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             
             this.logger().info('Successfully synced package.json to git', { 
                 filePath: fileState.filePath,
-                hash: fileState.lasthash 
             });
             
             // Broadcast update to clients
@@ -2448,6 +2459,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         isStreaming: boolean,
                         tool?: { name: string; status: 'start' | 'success' | 'error'; args?: Record<string, unknown> }
                     ) => {
+                        // Track conversationId when deep_debug starts
+                        if (tool?.name === 'deep_debug' && tool.status === 'start') {
+                            this.deepDebugConversationId = conversationId;
+                        }
+                        
                         this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
                             message,
                             conversationId,
