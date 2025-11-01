@@ -6,9 +6,6 @@ import type { ConversationMessage } from '../inferutils/common';
 import type { InferenceContext } from '../inferutils/config.types';
 
 export interface FileState extends FileOutputType {
-    lasthash: string;
-    lastmodified: number;
-    unmerged: string[];
     lastDiff: string;
 }
 
@@ -22,7 +19,6 @@ export enum CurrentDevState {
     PHASE_GENERATING,
     PHASE_IMPLEMENTING,
     REVIEWING,
-    FILE_REGENERATING,
     FINALIZING,
 }
 
@@ -32,7 +28,7 @@ export interface CodeGenState {
     blueprint: Blueprint;
     projectName: string,
     query: string;
-    generatedFilesMap: Record<string, FileState >;
+    generatedFilesMap: Record<string, FileState>;
     generatedPhases: PhaseState[];
     commandsHistory?: string[]; // History of commands run
     lastPackageJson?: string; // Last package.json file contents

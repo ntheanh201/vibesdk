@@ -1,4 +1,5 @@
 import { WebSocketMessageType } from "../api/websocketTypes";
+import { AgentActionKey } from "./inferutils/config.types";
 
 export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
     GENERATION_STARTED: 'generation_started',
@@ -80,7 +81,6 @@ export const WebSocketMessageResponses: Record<string, WebSocketMessageType> = {
 export const WebSocketMessageRequests = {
     GENERATE_ALL: 'generate_all',
     GENERATE: 'generate',
-    CODE_REVIEW: 'code_review',
     DEPLOY: 'deploy',
     PREVIEW: 'preview',
     OVERWRITE: 'overwrite',
@@ -109,4 +109,12 @@ export const WebSocketMessageRequests = {
 export const PREVIEW_EXPIRED_ERROR = 'Preview expired, attempting redeploy. Please try again after a minute or refresh the page';
 export const MAX_DEPLOYMENT_RETRIES = 5;
 export const MAX_LLM_MESSAGES = 200;
-export const MAX_TOOL_CALLING_DEPTH = 7;
+export const MAX_TOOL_CALLING_DEPTH_DEFAULT = 7;
+export const getMaxToolCallingDepth = (agentActionKey: AgentActionKey | 'testModelConfig') => {
+    switch (agentActionKey) {
+        case 'deepDebugger':
+            return 100;
+        default:
+            return MAX_TOOL_CALLING_DEPTH_DEFAULT;
+    }
+}

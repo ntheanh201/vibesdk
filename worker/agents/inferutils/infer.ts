@@ -1,4 +1,4 @@
-import { infer, InferError, InferResponseString, InferResponseObject } from './core';
+import { infer, InferError, InferResponseString, InferResponseObject, AbortError } from './core';
 import { createAssistantMessage, createUserMessage, Message } from './common';
 import z from 'zod';
 // import { CodeEnhancementOutput, CodeEnhancementOutputType } from '../codegen/phasewiseGenerator';
@@ -157,10 +157,10 @@ export async function executeInference<T extends z.AnyZodObject>(   {
                 error
             );
 
-            if (error instanceof InferError) {
-                // If its an infer error, we can append the partial response to the list of messages and ask a cheaper model to retry the generation
-                if (error.partialResponse && error.partialResponse.length > 1000) {
-                    messages.push(createAssistantMessage(error.partialResponse));
+            if (error instanceof InferError && !(error instanceof AbortError)) {
+                // If its an infer error and not an abort error, we can append the partial response to the list of messages and ask a cheaper model to retry the generation
+                if (error.response && error.response.length > 1000) {
+                    messages.push(createAssistantMessage(error.response));
                     messages.push(createUserMessage(responseRegenerationPrompts));
                     useCheaperModel = true;
                 }

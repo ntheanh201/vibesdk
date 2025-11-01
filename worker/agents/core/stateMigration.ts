@@ -30,9 +30,6 @@ export class StateMigration {
             
             migratedFilesMap[key] = {
                 ...migratedFile,
-                lasthash: migratedFile.lasthash || '',
-                lastmodified: migratedFile.lastmodified || Date.now(),
-                unmerged: migratedFile.unmerged || []
             };
             
             if (migratedFile !== file) {
