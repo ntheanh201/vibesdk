@@ -1,0 +1,140 @@
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  code-review:
+    name: Code Quality Review
+    if: |
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.title, 'Release') &&
+      (
+        github.event_name == 'pull_request' || 
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      )
+    
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review PR #${{ github.event.pull_request.number }}.
+
+            Read CLAUDE.md for project conventions and architecture patterns. Read docs/llm.md for detailed project architecture.
+
+            Focus on substantive issues:
+            - Code quality, potential bugs, architecture alignment
+            - Type safety (no 'any' allowed per project rules)
+            - DRY principle violations
+            - Testing coverage
+
+            Be concise and professional. Only report actual issues worth addressing.
+            Skip generic praise and obvious observations. If the PR looks good, say so briefly.
+            Do NOT use emojis in your review.
+
+            To post your review:
+            1. Check for existing comment:
+               ```bash
+               COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("## Code Review")) | .id' | head -1)
+               ```
+
+            2. If COMMENT_ID exists, update it:
+               ```bash
+               gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="YOUR_REVIEW_HERE"
+               ```
+
+            3. Otherwise create new comment:
+               ```bash
+               gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
+               ```
+
+            Start your review with "## Code Review" heading.
+          
+          claude_args: |
+            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
+            --max-turns 5
+            --model claude-sonnet-4-5-20250929
+
+  security-review:
+    name: Security Review
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.title, 'Release')
+    
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Security Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Security review for PR #${{ github.event.pull_request.number }}.
+
+            Read CLAUDE.md for project context, docs/llm.md for detailed project architecture, then scan for security vulnerabilities:
+            
+            Critical issues to check:
+            - SQL injection risks
+            - XSS vulnerabilities  
+            - Authentication/authorization flaws
+            - Insecure data handling
+            - Dependency vulnerabilities
+            - SSRF attacks
+            - DNS rebinding attacks
+            - Improper input validation
+            - Secrets exposure
+            
+            Focus on worker/, src/, and shared/ directories.
+            
+            Reporting guidelines:
+            - Only report real vulnerabilities, not theoretical ones
+            - Provide specific fix recommendations with code examples
+            - If no issues found, state that clearly and briefly
+            - Be professional and direct
+            - Do NOT use emojis
+            
+            Update existing comment to prevent spam:
+            ```bash
+            COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("## Security Review")) | .id' | head -1)
+            if [ -n "$COMMENT_ID" ]; then
+              gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="YOUR_REVIEW_HERE"
+            else
+              gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
+            fi
+            ```
+            
+            Start with "## Security Review" heading.
+          
+          claude_args: |
+            --allowed-tools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh api:*)"
+            --max-turns 3
+            --model claude-sonnet-4-5-20250929
