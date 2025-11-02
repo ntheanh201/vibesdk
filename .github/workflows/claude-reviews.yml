@@ -13,7 +13,7 @@ jobs:
     name: Review PR Description
     if: |
       github.event_name == 'pull_request' &&
-      github.event.action == 'opened' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize') &&
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       !contains(github.event.pull_request.title, 'Release')
     
