@@ -851,7 +851,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     - External dependencies are available
     - Error boundaries around components that might fail
 
-    **Also there is no support for websockets and dynamic imports may not work, so please avoid using them.**
+    **Also dynamic imports may not work, so please avoid using them.**
 
     ### **IMPORT VALIDATION EXAMPLES**
     **CRITICAL**: Verify ALL imports before using. Wrong imports = runtime crashes.
@@ -903,7 +903,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
         - With react 18, it will throw runtime error: Cannot read properties of undefined (reading 'S')
         react@18.3.1 three@^0.160.0 comlink@^4.4.1 idb-keyval@^6.2.1 simplex-noise@^4.0.1 @msgpack/msgpack@^2.8.0 - These work well together
 
-    • **No support for websockets and dynamic imports may not work, so please avoid using them.**
+    • **No support for dynamic imports may not work, so please avoid using them.**
     - **Zustand v5 (Always Installed in Templates):**
       - Selector patterns: See REACT INFINITE LOOP PREVENTION section for complete guidelines
       - v5 syntax for useShallow: \`import { useShallow } from 'zustand/react/shallow';\`
