@@ -26,12 +26,12 @@ export function createExecCommandsTool(
 				properties: {
 					commands: { type: 'array', items: { type: 'string' } },
 					shouldSave: { type: 'boolean', default: true },
-					timeout: { type: 'number' },
+					timeout: { type: 'number', default: 30000 },
 				},
 				required: ['commands'],
 			},
 		},
-		implementation: async ({ commands, shouldSave = true, timeout }) => {
+		implementation: async ({ commands, shouldSave = true, timeout = 30000 }) => {
 			try {
 				logger.info('Executing commands', {
 					count: commands.length,

@@ -24,8 +24,8 @@ export class CodingAgentInterface {
         return this.agentStub.fetchRuntimeErrors(clear);
     }
 
-    async deployPreview(clearLogs: boolean = true): Promise<string> {
-        const response = await this.agentStub.deployToSandbox([], false, undefined, clearLogs);
+    async deployPreview(clearLogs: boolean = true, forceRedeploy: boolean = false): Promise<string> {
+        const response = await this.agentStub.deployToSandbox([], forceRedeploy, undefined, clearLogs);
         // Send a message to refresh the preview
         if (response && response.previewURL) {
             this.agentStub.broadcast(WebSocketMessageResponses.PREVIEW_FORCE_REFRESH, {});

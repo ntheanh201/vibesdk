@@ -4,6 +4,7 @@ import { CodingAgentInterface } from 'worker/agents/services/implementations/Cod
 
 export type ReadFilesArgs = {
 	paths: string[];
+	timeout?: number;
 };
 
 export type ReadFilesResult =
@@ -24,14 +25,23 @@ export function createReadFilesTool(
 				type: 'object',
 				properties: {
 					paths: { type: 'array', items: { type: 'string' } },
+					timeout: { type: 'number', default: 30000 },
 				},
 				required: ['paths'],
 			},
 		},
-		implementation: async ({ paths }) => {
+		implementation: async ({ paths, timeout = 30000 }) => {
 			try {
-				logger.info('Reading files', { count: paths.length });
-				return await agent.readFiles(paths);
+				logger.info('Reading files', { count: paths.length, timeout });
+				
+				const timeoutPromise = new Promise<ErrorResult>((_, reject) => 
+					setTimeout(() => reject(new Error(`Read files operation timed out after ${timeout}ms`)), timeout)
+				);
+				
+				return await Promise.race([
+					agent.readFiles(paths),
+					timeoutPromise
+				]);
 			} catch (error) {
 				return {
 					error:
