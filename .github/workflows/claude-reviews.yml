@@ -10,7 +10,7 @@ on:
 
 jobs:
   pr-description:
-    name: Generate PR Description
+    name: Review PR Description
     if: |
       github.event_name == 'pull_request' &&
       github.event.action == 'opened' &&
@@ -21,39 +21,38 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     
     steps:
-      - name: Check PR Description
-        id: check_description
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_BODY=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json body --jq '.body')
-          
-          # Check if body is empty or just whitespace
-          if [ -z "$(echo "$PR_BODY" | tr -d '[:space:]')" ]; then
-            echo "empty=true" >> $GITHUB_OUTPUT
-          else
-            echo "empty=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Checkout repository
-        if: steps.check_description.outputs.empty == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Generate PR Description with Claude
-        if: steps.check_description.outputs.empty == 'true'
+      - name: Review and Update PR Description with Claude
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Generate a professional PR description for PR #${{ github.event.pull_request.number }}.
+            Review and improve the PR description for PR #${{ github.event.pull_request.number }}.
             
             Read CLAUDE.md and docs/llm.md to understand the project architecture and conventions.
             
-            Analyze the changes in this PR and create a structured description following this format:
+            First, check the current PR description:
+            ```bash
+            gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json body --jq '.body'
+            ```
+            
+            Then analyze the changes:
+            ```bash
+            gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
+            ```
+            
+            Evaluate the current description:
+            - If empty: Generate a complete professional description
+            - If present: Assess if it's comprehensive and well-structured
+            
+            A good PR description should follow this format:
             
             ## Summary
             Brief 1-2 sentence overview of what this PR accomplishes.
@@ -75,22 +74,32 @@ jobs:
             
             ---
             
-            Guidelines:
-            - Be concise and professional
-            - Use markdown formatting
-            - Do NOT use emojis
-            - Focus on substance over style
-            - Highlight important architectural decisions
-            - Note any new dependencies or patterns introduced
+            Decision Logic:
+            1. If description is empty or just a placeholder → Generate complete description
+            2. If description is present but incomplete/vague → Suggest improvements as a comment
+            3. If description is comprehensive and well-structured → Do nothing
             
-            After generating the description, update the PR:
+            To update the PR description:
             ```bash
             gh pr edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "YOUR_GENERATED_DESCRIPTION"
             ```
+            
+            To suggest improvements (if description exists but needs work):
+            ```bash
+            gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "## 📝 PR Description Suggestions\n\nYOUR_SUGGESTIONS_HERE"
+            ```
+            
+            Guidelines:
+            - Be concise and professional
+            - Use markdown formatting
+            - Do NOT use emojis in the description itself (only in suggestion comments)
+            - Focus on substance over style
+            - Highlight important architectural decisions
+            - Note any new dependencies or patterns introduced
           
           claude_args: |
-            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh api:*)"
-            --max-turns 3
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh api:*)"
+            --max-turns 5
             --model claude-sonnet-4-5-20250929
 
   code-review:
@@ -109,6 +118,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      id-token: write
     
     steps:
       - name: Checkout repository
@@ -170,6 +180,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      id-token: write
     
     steps:
       - name: Checkout repository
