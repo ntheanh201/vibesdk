@@ -167,90 +167,73 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Perform a comprehensive, thorough and accurate code quality and security review for PR #${{ github.event.pull_request.number }}.
-
-            Read CLAUDE.md for project conventions. Only read docs/llm.md if you need detailed architecture information.
-
-            **Code Quality Issues:**
-            - Code quality, potential bugs, architecture alignment
-            - Logical flaws, bugs, issues
-            - Type safety (no 'any' allowed per project rules)
-            - DRY principle violations
-            - Testing coverage
-            - Performance concerns
-
-            **Security Issues:**
-            - SQL injection risks
-            - XSS vulnerabilities  
-            - Authentication/authorization flaws
-            - Insecure data handling
-            - Dependency vulnerabilities
-            - SSRF attacks
-            - DNS rebinding attacks
-            - Improper input validation
-            - Secrets exposure
+            Perform a thorough code quality and security review for PR #${{ github.event.pull_request.number }}.
             
-            Focus review on worker/, src/, and shared/ directories.
+            WORKFLOW:
             
-            **Review Guidelines:**
-            - Be concise and professional
-            - Only report actual issues worth addressing
-            - Skip generic praise and obvious observations
-            - Provide specific fix recommendations with code examples
-            - Do NOT use emojis
-            - Group findings by severity: Critical, High, Medium, Low
+            1. Understand context (dig only as needed for this PR)
+               - Read CLAUDE.md for project conventions
+               - Read llm.md only if architectural details are needed
+               - Check PR diff to understand scope of changes
             
-            **CRITICAL: You MUST post a review comment in ALL cases**
-            Format your review as:
-            ```markdown
-            ## Code & Security Review
+            2. Comprehensive review (be thorough but efficient)
+               Focus on worker/, src/, shared/ directories:
+               
+               **Code Quality:**
+               - Bugs, logical errors, edge cases
+               - Type safety violations (no 'any' allowed)
+               - DRY principle violations
+               - Architecture misalignment
+               - Performance issues
+               - Missing tests
+               
+               **Security:**
+               - SQL injection, XSS vulnerabilities
+               - Auth/authorization flaws
+               - Insecure data handling
+               - Secrets exposure
+               - Input validation issues
+               - SSRF, DNS rebinding attacks
             
-            ### Code Quality
-            [Issues or "✅ No significant issues found"]
+            3. Make recommendation
+               - APPROVE: If code meets quality/security standards
+               - REQUEST CHANGES: If critical issues found
+               - COMMENT: If minor improvements suggested
             
-            ### Security
-            [Vulnerabilities or "✅ No security vulnerabilities found"]
-            
-            ### Summary
-            [Brief overall assessment]
-            ```
-            
-            **Smart Comment Management:**
-            1. Find ALL previous review comments from this bot:
-               ```bash
-               COMMENT_IDS=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("## Code & Security Review")) | .id] | join(" ")')
-               ```
-
-            2. If multiple old comments exist, minimize them (all but the most recent):
-               ```bash
-               if [ -n "$COMMENT_IDS" ]; then
-                 COMMENT_ARRAY=($COMMENT_IDS)
-                 TOTAL=${#COMMENT_ARRAY[@]}
-                 if [ $TOTAL -gt 1 ]; then
-                   # Minimize all but the last one
-                   for ((i=0; i<$TOTAL-1; i++)); do
-                     gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ARRAY[$i]} -X PATCH -f body="<details><summary>🔒 Outdated review (click to expand)</summary>\n\nThis review has been superseded by a newer one.\n</details>"
-                   done
-                 fi
-                 LATEST_COMMENT=${COMMENT_ARRAY[$TOTAL-1]}
-               fi
-               ```
-
-            3. Update latest comment if exists, otherwise create new:
-               ```bash
-               if [ -n "$LATEST_COMMENT" ]; then
-                 gh api repos/${{ github.repository }}/issues/comments/$LATEST_COMMENT -X PATCH -f body="YOUR_REVIEW_HERE"
-               else
-                 gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
-               fi
+            4. Format review
+               ```markdown
+               ## Code & Security Review
+               
+               **Recommendation:** [APPROVE / REQUEST CHANGES / COMMENT]
+               
+               ### Code Quality
+               [Grouped by severity: Critical/High/Medium/Low OR "✅ No issues"]
+               
+               ### Security
+               [Vulnerabilities with severity OR "✅ No vulnerabilities"]
+               
+               ### Summary
+               [Overall assessment with approval/disapproval reasoning]
                ```
             
-            **CRITICAL FINAL STEP:**
-            After completing your analysis, you MUST execute the comment management bash commands above.
-            DO NOT finish without posting a review comment.
-            Even if no issues are found, post the "✅ No issues" message.
+            5. Post review (MANDATORY FINAL STEP)
+               ```bash
+               # Collapse old reviews
+               gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("## Code & Security Review")) | .id' | while read cid; do
+                 gh api repos/${{ github.repository }}/issues/comments/$cid -X PATCH -f body="<details><summary>Outdated</summary>Superseded</details>" 2>/dev/null || true
+               done
+               
+               # Post new review
+               gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "YOUR_REVIEW_HERE"
+               ```
+            
+            GUIDELINES:
+            - Be thorough but efficient - dig deeper only where the PR changes warrant it
+            - Provide specific examples and fixes for issues found
+            - Professional tone, no emojis
+            - Must post comment at the end with your findings
           
           claude_args: |
             --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
-            --max-turns 20
+            --max-turns 50
             --model claude-sonnet-4-5-20250929
