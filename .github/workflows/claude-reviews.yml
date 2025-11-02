@@ -9,6 +9,90 @@ on:
     types: [created]
 
 jobs:
+  pr-description:
+    name: Generate PR Description
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.title, 'Release')
+    
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    
+    steps:
+      - name: Check PR Description
+        id: check_description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_BODY=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json body --jq '.body')
+          
+          # Check if body is empty or just whitespace
+          if [ -z "$(echo "$PR_BODY" | tr -d '[:space:]')" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+          else
+            echo "empty=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout repository
+        if: steps.check_description.outputs.empty == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate PR Description with Claude
+        if: steps.check_description.outputs.empty == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Generate a professional PR description for PR #${{ github.event.pull_request.number }}.
+            
+            Read CLAUDE.md and docs/llm.md to understand the project architecture and conventions.
+            
+            Analyze the changes in this PR and create a structured description following this format:
+            
+            ## Summary
+            Brief 1-2 sentence overview of what this PR accomplishes.
+            
+            ## Changes
+            - List key changes made (be specific about files/components modified)
+            - Focus on what changed, not how (code speaks for itself)
+            - Group related changes together
+            
+            ## Motivation
+            Why was this change needed? What problem does it solve?
+            
+            ## Testing
+            - How can reviewers test this?
+            - What scenarios should be verified?
+            
+            ## Breaking Changes (if any)
+            List any breaking changes or migration steps required.
+            
+            ---
+            
+            Guidelines:
+            - Be concise and professional
+            - Use markdown formatting
+            - Do NOT use emojis
+            - Focus on substance over style
+            - Highlight important architectural decisions
+            - Note any new dependencies or patterns introduced
+            
+            After generating the description, update the PR:
+            ```bash
+            gh pr edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "YOUR_GENERATED_DESCRIPTION"
+            ```
+          
+          claude_args: |
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh api:*)"
+            --max-turns 3
+            --model claude-sonnet-4-5-20250929
+
   code-review:
     name: Code Quality Review
     if: |
