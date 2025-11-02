@@ -413,7 +413,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 templateDetails.allFiles,
                 {
                     projectName: this.state.projectName,
-                    commandsHistory: this.state.commandsHistory || []
+                    commandsHistory: this.getBootstrapCommands()
                 }
             );
             Object.assign(customizedAllFiles, customizedFiles);
@@ -444,22 +444,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             return;
         }
         
-        // Final validation before writing (safety net)
-        const { validCommands, invalidCommands } = validateAndCleanBootstrapCommands(commandsHistory);
-        
-        if (invalidCommands.length > 0) {
-            this.logger().warn('[commands] CRITICAL: Invalid commands detected in bootstrap history', {
-                invalidCommands,
-                willBeRejected: true,
-                validCount: validCommands.length,
-                invalidCount: invalidCommands.length
-            });
-        }
-        
         // Use only validated commands
         const bootstrapScript = generateBootstrapScript(
             this.state.projectName,
-            validCommands
+            commandsHistory
         );
         
         await this.fileManager.saveGeneratedFile(
@@ -471,9 +459,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             'chore: Update bootstrap script with latest commands'
         );
         
-        this.logger().info('Updated bootstrap script with validated commands', {
-            commandCount: validCommands.length,
-            commands: validCommands
+        this.logger().info('Updated bootstrap script with commands', {
+            commandCount: commandsHistory.length,
+            commands: commandsHistory
         });
     }
 
@@ -2013,6 +2001,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.onProjectUpdate(message);
         }
         broadcastToConnections(this, msg, data || {} as WebSocketMessageData<T>);
+    }
+
+    private getBootstrapCommands() {
+        const bootstrapCommands = this.state.commandsHistory || [];
+        // Validate, deduplicate, and clean
+        const { validCommands } = validateAndCleanBootstrapCommands(bootstrapCommands);
+        return validCommands;
     }
 
     private async saveExecutedCommands(commands: string[]) {
