@@ -32,6 +32,7 @@ jobs:
       - name: Review and Update PR Description with Claude
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Review and improve the PR description for PR #${{ github.event.pull_request.number }}.
@@ -129,6 +130,7 @@ jobs:
       - name: Run Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Review PR #${{ github.event.pull_request.number }}.
@@ -191,6 +193,7 @@ jobs:
       - name: Run Claude Security Review
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Security review for PR #${{ github.event.pull_request.number }}.
