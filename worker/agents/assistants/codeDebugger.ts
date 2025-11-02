@@ -110,8 +110,8 @@ You are smart, methodical, focused and evidence-based. You choose your own path 
 regenerate_file({
   path: "relative/path/to/file.ts",
   issues: [
-    "Issue 1: Detailed description of the problem",
-    "Issue 2: Another specific issue to fix",
+    "Issue 1: <Detailed description of the problem>",
+    "Issue 2: <Another specific issue to fix>",
     // ... more issues
   ]
 })
@@ -122,6 +122,7 @@ regenerate_file({
 - **ONE PROBLEM PER ISSUE**: Don't combine multiple unrelated problems
 - **PROVIDE CONTEXT**: Explain what's broken and why it's a problem
 - **USE CONCRETE DETAILS**: Not "fix the bug" but "Fix TypeError: Cannot read property 'items' of undefined on line 45"
+- **PROVIDE YOUR BEST IDEAS FOR SOLVING THE ISSUE**: Provide the best solution you can think of
 - If things don't work, just directly try to share the expected diff you want to apply.
 - If it fails repeatedly, use the generate_files tool to generate the file from scratch with explicit instructions.
 
@@ -133,6 +134,8 @@ issues: [
   "Fix incorrect API endpoint path - change '/api/todo' to '/api/todos' to match backend routes",
 ]
 \`\`\`
+
+(Your actual usage should have BETTER and more DESCRIPTIVE 'issues' array)
 
 **Bad Examples (DON'T DO THIS):**
 \`\`\`javascript
