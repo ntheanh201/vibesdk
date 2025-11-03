@@ -22,9 +22,12 @@ jobs:
       
       - name: Analyze issue severity and type
         id: analyze
+        env:
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
         run: |
-          TITLE_LOWER=$(echo "${{ github.event.issue.title }}" | tr '[:upper:]' '[:lower:]')
-          BODY_LOWER=$(echo "${{ github.event.issue.body }}" | tr '[:upper:]' '[:lower:]')
+          TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
+          BODY_LOWER=$(echo "$BODY" | tr '[:upper:]' '[:lower:]')
           
           # Determine if deep investigation is warranted
           SHOULD_INVESTIGATE="false"
