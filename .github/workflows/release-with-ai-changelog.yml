@@ -28,6 +28,10 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,88 +46,81 @@ jobs:
           echo "previous_tag=$PREV_TAG" >> $GITHUB_OUTPUT
       
       - name: Generate changelog with Claude
-        id: changelog
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Generate a professional changelog for this release.
+            
+            Compare tags:
+            - From: ${{ steps.prev_tag.outputs.previous_tag }}
+            - To: ${{ steps.prev_tag.outputs.current_tag }}
+            
+            Get commits and changes:
+            ```bash
+            git log "${{ steps.prev_tag.outputs.previous_tag }}...${{ steps.prev_tag.outputs.current_tag }}" --pretty=format:"%s" | head -100 > /tmp/commits.txt
+            git diff "${{ steps.prev_tag.outputs.previous_tag }}...${{ steps.prev_tag.outputs.current_tag }}" --shortstat > /tmp/stats.txt
+            cat /tmp/commits.txt /tmp/stats.txt
+            ```
+            
+            Generate changelog:
+            1. Categorize: Added, Changed, Fixed, Security, Performance, Documentation
+            2. Write clear, user-focused descriptions
+            3. Explain impact and breaking changes
+            4. Use concise bullet points
+            5. Professional tone, no emojis
+            6. Focus on what matters to users
+            
+            Save result to file:
+            ```bash
+            cat << 'CHANGELOG' > /tmp/changelog.md
+            [YOUR_GENERATED_CHANGELOG_HERE]
+            CHANGELOG
+            ```
+          
+          claude_args: |
+            --allowed-tools "Bash(git:*),Bash(cat:*),Bash(echo:*)"
+            --max-turns 10
+            --model claude-haiku-4-5-20251001
+      
+      - name: Check if changelog was generated
+        id: check_changelog
         run: |
-          FROM_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
-          TO_TAG="${{ steps.prev_tag.outputs.current_tag }}"
-          
-          if [ -z "$FROM_TAG" ]; then
-            echo "No previous tag found, skipping changelog generation"
-            echo "result=Initial release" >> $GITHUB_OUTPUT
-            exit 0
+          if [ -f /tmp/changelog.md ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
-          
-          # Get commit messages
-          COMMITS=$(git log "$FROM_TAG..$TO_TAG" --pretty=format:"%s" | head -100)
-          
-          # Get diff stats
-          DIFF_STATS=$(git diff "$FROM_TAG..$TO_TAG" --shortstat)
-          
-          # Create prompt for Claude
-          cat > /tmp/prompt.txt << 'PROMPT'
-          Analyze the following commits and generate a professional changelog.
-          
-          Commits:
-          COMMITS_PLACEHOLDER
-          
-          Changes: DIFF_STATS_PLACEHOLDER
-          
-          Instructions:
-          1. Categorize changes: Added, Changed, Fixed, Security, Performance, Documentation
-          2. Write clear, user-focused descriptions
-          3. Explain impact and breaking changes if any
-          4. Use concise bullet points
-          5. Be professional and direct
-          6. Do NOT use emojis
-          7. Focus on what matters to users
-          
-          Output only the changelog content in markdown format. Start immediately with category headings.
-          PROMPT
-          
-          sed -i "s|COMMITS_PLACEHOLDER|$COMMITS|g" /tmp/prompt.txt
-          sed -i "s|DIFF_STATS_PLACEHOLDER|$DIFF_STATS|g" /tmp/prompt.txt
-          
-          # Call Claude API
-          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
-            -H "content-type: application/json" \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "anthropic-version: 2023-06-01" \
-            -d @- << EOF
-          {
-            "model": "claude-sonnet-4-5-20250929",
-            "max_tokens": 2000,
-            "messages": [{
-              "role": "user",
-              "content": $(cat /tmp/prompt.txt | jq -Rs .)
-            }]
-          }
-          EOF
-          )
-          
-          # Extract content
-          CHANGELOG=$(echo "$RESPONSE" | jq -r '.content[0].text')
-          
-          # Save to output
-          echo "result<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
       
       - name: Enhance release notes
-        if: steps.changelog.outputs.result != ''
+        if: steps.check_changelog.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_BODY=$(gh release view ${{ needs.release-please.outputs.tag_name }} --json body -q .body)
+          TAG_NAME="${{ needs.release-please.outputs.tag_name }}"
+          CURRENT_BODY=$(gh release view "$TAG_NAME" --json body -q .body)
           
-          gh release edit ${{ needs.release-please.outputs.tag_name }} --notes "$(cat << 'EOF'
+          # Create new release notes file
+          cat > /tmp/release-notes.md << 'EOF'
           ## Summary
           
-          ${{ steps.changelog.outputs.result }}
+          EOF
+          
+          # Append AI-generated changelog
+          cat /tmp/changelog.md >> /tmp/release-notes.md
+          
+          # Add separator and original notes
+          cat >> /tmp/release-notes.md << 'EOF'
           
           ---
           
           ## Detailed Changes
           
-          $CURRENT_BODY
           EOF
-          )"
+          
+          # Append current body without variable expansion
+          echo "$CURRENT_BODY" >> /tmp/release-notes.md
+          
+          # Update release
+          gh release edit "$TAG_NAME" --notes-file /tmp/release-notes.md
