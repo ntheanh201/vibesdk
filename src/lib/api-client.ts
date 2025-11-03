@@ -14,6 +14,7 @@ import type{
 	AppDeleteData,
 	AppDetailsData,
 	AppStarToggleData,
+	GitCloneTokenData,
 	UserAppsData,
 	ProfileUpdateData,
 	UserStatsData,
@@ -530,6 +531,17 @@ class ApiClient {
 		});
 	}
 
+	/**
+	 * Generate a short-lived token for git clone (private repos only)
+	 */
+	async generateGitCloneToken(
+		appId: string,
+	): Promise<ApiResponse<GitCloneTokenData>> {
+		return this.request<GitCloneTokenData>(`/api/apps/${appId}/git/token`, {
+			method: 'POST',
+		});
+	}
+
 	// /**
 	//  * Fork an app
 	//  */
@@ -934,8 +946,38 @@ class ApiClient {
 		description?: string;
 		isPrivate?: boolean;
 		agentId: string;
-	}): Promise<ApiResponse<{ authUrl: string }>> {
-		return this.request<{ authUrl: string }>('/api/github-app/export', {
+	}): Promise<ApiResponse<{ 
+		authUrl?: string;
+		success?: boolean;
+		repositoryUrl?: string;
+		skippedOAuth?: boolean;
+		alreadyExists?: boolean;
+		existingRepositoryUrl?: string;
+	}>> {
+		return this.request('/api/github-app/export', {
+			method: 'POST',
+			body: data,
+		});
+	}
+
+	/**
+	 * Check remote repository status
+	 */
+	async checkRemoteStatus(data: {
+		repositoryUrl: string;
+		agentId: string;
+	}): Promise<ApiResponse<{
+		compatible: boolean;
+		behindBy: number;
+		aheadBy: number;
+		divergedCommits: Array<{
+			sha: string;
+			message: string;
+			author: string;
+			date: string;
+		}>;
+	}>> {
+		return this.request('/api/github-app/check-remote', {
 			method: 'POST',
 			body: data,
 		});
