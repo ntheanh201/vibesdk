@@ -1183,7 +1183,7 @@ export default function Chat() {
 														lineNumbers: 'on',
 														scrollBeyondLastLine: false,
 														fontSize: 13,
-														theme: 'v1-dev',
+														theme: 'vibesdk',
 														automaticLayout: true,
 													}}
 													find={

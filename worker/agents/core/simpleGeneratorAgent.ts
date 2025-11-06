@@ -7,7 +7,7 @@ import {
     FileOutputType,
     PhaseImplementationSchemaType,
 } from '../schemas';
-import { ExecuteCommandsResponse, GitHubPushRequest, PreviewType, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
+import { ExecuteCommandsResponse, GitHubPushRequest, PreviewType, RuntimeError, StaticAnalysisResponse, TemplateDetails } from '../../services/sandbox/sandboxTypes';
 import {  GitHubExportResult } from '../../services/github/types';
 import { GitHubService } from '../../services/github/GitHubService';
 import { CodeGenState, CurrentDevState, MAX_PHASES } from './state';
@@ -1435,8 +1435,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         return this.ctx.getWebSockets();
     }
 
-    async fetchRuntimeErrors(clear: boolean = true) {
-        await this.deploymentManager.waitForPreview();
+    async fetchRuntimeErrors(clear: boolean = true, shouldWait: boolean = true): Promise<RuntimeError[]> {
+        if (shouldWait) {
+            await this.deploymentManager.waitForPreview();
+        }
 
         try {
             const errors = await this.deploymentManager.fetchRuntimeErrors(clear);
@@ -1454,7 +1456,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().error("Exception fetching runtime errors:", error);
             // If fetch fails, initiate redeploy
             this.deployToSandbox();
-            return [];
+            const message = "<runtime errors not available at the moment as preview is not deployed>";
+            return [{ message, timestamp: new Date().toISOString(), level: 0, rawOutput: message }];
         }
     }
 
@@ -2429,7 +2432,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             await this.ensureTemplateDetails();
 
             // Just fetch runtime errors
-            const errors = await this.fetchRuntimeErrors(false);
+            const errors = await this.fetchRuntimeErrors(false, false);
             const projectUpdates = await this.getAndResetProjectUpdates();
             this.logger().info('Passing context to user conversation processor', { errors, projectUpdates });
 
