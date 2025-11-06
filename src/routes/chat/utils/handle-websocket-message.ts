@@ -254,6 +254,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                     
                     if (state.shouldBeGenerating && !isGenerating) {
                         logger.debug('🔄 Reconnected with shouldBeGenerating=true, auto-resuming generation');
+                        setIsGenerating(true); 
                         updateStage('code', { status: 'active' });
                         sendWebSocketMessage(websocket, 'generate_all');
                     }
