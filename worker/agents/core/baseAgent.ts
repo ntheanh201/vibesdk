@@ -667,7 +667,7 @@ export abstract class BaseAgentBehavior<TState extends BaseProjectState> impleme
                         focusPaths.some((p) => f.filePath.includes(p)),
                     );
 
-                const runtimeErrors = await this.fetchRuntimeErrors(true);
+                const runtimeErrors = await this.fetchRuntimeErrors(false);
 
                 const dbg = new DeepCodeDebugger(
                     operationOptions.env,
