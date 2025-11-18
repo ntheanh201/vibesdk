@@ -36,7 +36,6 @@ import { useAutoScroll } from '@/hooks/use-auto-scroll';
 import { useImageUpload } from '@/hooks/use-image-upload';
 import { useDragDrop } from '@/hooks/use-drag-drop';
 import { ImageAttachmentPreview } from '@/components/image-attachment-preview';
-import { createAIMessage } from './utils/message-helpers';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -113,14 +112,12 @@ export default function Chat() {
 		totalFiles,
 		websocket,
 		sendUserMessage,
-		sendAiMessage,
 		blueprint,
 		previewUrl,
 		clearEdit,
 		projectStages,
 		phaseTimeline,
 		isThinking,
-		onCompleteBootstrap,
 		// Deployment and generation control
 		isDeploying,
 		cloudflareDeploymentUrl,
@@ -235,7 +232,7 @@ export default function Chat() {
 	const imageInputRef = useRef<HTMLInputElement>(null);
 
 	// Fake stream bootstrap files
-	const { streamedFiles: streamedBootstrapFiles, doneStreaming } =
+	const { streamedFiles: streamedBootstrapFiles } =
 		useFileContentStream(bootstrapFiles, {
 			tps: 600,
 			enabled: isBootstrapping,
