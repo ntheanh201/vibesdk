@@ -30,8 +30,7 @@ import { ScreenshotAnalysisOperation } from '../operations/ScreenshotAnalysis';
 // Database schema imports removed - using zero-storage OAuth flow
 import { BaseSandboxService } from '../../services/sandbox/BaseSandboxService';
 import { WebSocketMessageData, WebSocketMessageType } from '../../api/websocketTypes';
-import { InferenceContext, AgentActionKey, ModelConfig } from '../inferutils/config.types';
-import { AGENT_CONFIG, AGENT_CONSTRAINTS } from '../inferutils/config';
+import { InferenceContext, ModelConfig } from '../inferutils/config.types';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
@@ -1344,73 +1343,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         };
     }
 
-    /**
-     * Get current model configurations (defaults + user overrides)
-     * Used by WebSocket to provide configuration info to frontend
-     */
-    async getModelConfigsInfo() {
-        const userId = this.state.inferenceContext.userId;
-        if (!userId) {
-            throw new Error('No user session available for model configurations');
-        }
-
-        try {
-            const modelConfigService = new ModelConfigService(this.env);
-            
-            // Get all user configs
-            const userConfigsRecord = await modelConfigService.getUserModelConfigs(userId);
-            
-            // Transform to match frontend interface with constraint info
-            const agents = Object.entries(AGENT_CONFIG).map(([key, config]) => {
-                const constraint = AGENT_CONSTRAINTS.get(key as AgentActionKey);
-                return {
-                    key,
-                    name: config.name,
-                    description: config.description,
-                    constraint: constraint ? {
-                        enabled: constraint.enabled,
-                        allowedModels: Array.from(constraint.allowedModels)
-                    } : undefined
-                };
-            });
-
-            const userConfigs: Record<string, any> = {};
-            const defaultConfigs: Record<string, any> = {};
-
-            for (const [actionKey, mergedConfig] of Object.entries(userConfigsRecord)) {
-                if (mergedConfig.isUserOverride) {
-                    userConfigs[actionKey] = {
-                        name: mergedConfig.name,
-                        max_tokens: mergedConfig.max_tokens,
-                        temperature: mergedConfig.temperature,
-                        reasoning_effort: mergedConfig.reasoning_effort,
-                        fallbackModel: mergedConfig.fallbackModel,
-                        isUserOverride: true
-                    };
-                }
-                
-                // Always include default config
-                const defaultConfig = AGENT_CONFIG[actionKey as AgentActionKey];
-                if (defaultConfig) {
-                    defaultConfigs[actionKey] = {
-                        name: defaultConfig.name,
-                        max_tokens: defaultConfig.max_tokens,
-                        temperature: defaultConfig.temperature,
-                        reasoning_effort: defaultConfig.reasoning_effort,
-                        fallbackModel: defaultConfig.fallbackModel
-                    };
-                }
-            }
-
-            return {
-                agents,
-                userConfigs,
-                defaultConfigs
-            };
-        } catch (error) {
-            this.logger().error('Error fetching model configs info:', error);
-            throw error;
-        }
+    getModelConfigsInfo() {
+        const modelService = new ModelConfigService(this.env);
+        return modelService.getModelConfigsInfo(this.state.inferenceContext.userId);
     }
 
     getTotalFiles(): number {
