@@ -70,8 +70,9 @@ Template Usage Instructions:
 ${template.description.usage}
 
 <DO NOT TOUCH FILES>
-These files are forbidden to be modified. Do not touch them under any circumstances.
+These files are forbidden to be modified. Do not touch them under any circumstances. Doing so will break the application.
 ${(template.dontTouchFiles ?? []).join('\n')}
+worker/core-utils.ts
 </DO NOT TOUCH FILES>
 
 <REDACTED FILES>
@@ -888,6 +889,7 @@ COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
         Applying this rule to your situation will fix both the type-check errors and the browser's runtime error.
 
     # Never write image files! Never write jpeg, png, svg, etc files yourself! Always use some image url from the web.
+    **Do not recommend installing \`cloudflare:workers\` or \`cloudflare:durable-objects\` as dependencies, these are already installed in the project always.**
 
 </AVOID COMMON PITFALLS>`,
     COMMON_DEP_DOCUMENTATION: `<COMMON DEPENDENCY DOCUMENTATION>
@@ -1368,7 +1370,7 @@ export function issuesPromptFormatter(issues: IssueReport): string {
 
 ### 1. CRITICAL RUNTIME ERRORS (Fix First - Deployment Blockers)
 **Error Count:** ${issues.runtimeErrors?.length || 0} runtime errors detected
-**Contains Render Loops:** ${runtimeErrorsText.includes('Maximum update depth') || runtimeErrorsText.includes('Too many re-renders') ? 'YES - HIGHEST PRIORITY' : 'No'}
+**Contains Render Loops:** ${runtimeErrorsText.includes('Maximum update depth') || runtimeErrorsText.includes('Too many re-renders') || runtimeErrorsText.includes('infinite loop') ? 'YES - HIGHEST PRIORITY' : 'No'}
 
 ${runtimeErrorsText || 'No runtime errors detected'}
 

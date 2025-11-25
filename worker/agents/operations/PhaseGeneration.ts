@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = `<ROLE>
 <TASK>
     You are given the blueprint (PRD) and the client query. You will be provided with all previously implemented project phases, the current latest snapshot of the codebase, and any current runtime issues or static analysis reports.
     
-    **Your primary task:** Design the next phase of the project as a deployable milestone leading to project completion or to address any user feedbacks or reported bugs.
+    **Your primary task:** Design the next phase of the project as a deployable milestone leading to project completion or to address any user feedbacks or reported bugs (runtime error fixing is the highest priority).
     
     **Phase Planning Process:**
     1. **ANALYZE** current codebase state and identify what's implemented vs. what remains
@@ -36,6 +36,8 @@ const SYSTEM_PROMPT = `<ROLE>
        - **Accessibility**: Proper semantic HTML, ARIA labels, keyboard navigation
        - **Supreme software development practices**: Follow the best coding principles and practices, and lay out the codebase in a way that is easy to maintain, extend and debug.
     4. **VALIDATE** that the phase will be deployable with all views/pages working beautifully across devices
+
+    Plan the phase name and description appropriately. They don't have to strictly adhere to the blueprint's roadmap as unforeseen issues may occur.
     
     The project needs to be fully ready to ship in a reasonable amount of time. Plan accordingly.
     If no more phases are needed, conclude by putting blank fields in the response.
@@ -230,7 +232,7 @@ const issuesPromptFormatterWithGuidelines = (issues: IssueReport): string => {
         serialized = `
 ${PROMPT_UTILS.COMMON_PITFALLS}
 
-${issues.runtimeErrors.some((error) => error.message.includes('infinite loop') || error.message.includes('re-renders')) ? PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION: ''}
+${issues.runtimeErrors.some((error) => error.message.includes('infinite loop') || error.message.includes('re-renders')) ? PROMPT_UTILS.REACT_RENDER_LOOP_PREVENTION_LITE: ''}
 
 ${serialized}`;
     }
@@ -292,6 +294,11 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
                 reasoning_effort: (userContext?.suggestions || issues.runtimeErrors.length > 0) ? AGENT_CONFIG.phaseGeneration.reasoning_effort == 'low' ? 'medium' : 'high' : undefined,
                 format: 'markdown',
             });
+    
+            if (!results) {
+                logger.error('Phase generation returned no result after all retries');
+                throw new Error('Failed to generate next phase: inference returned null');
+            }
     
             logger.info(`Generated next phase: ${results.name}, ${results.description}`);
     

@@ -30,7 +30,7 @@ import { ScreenshotAnalysisOperation } from '../operations/ScreenshotAnalysis';
 // Database schema imports removed - using zero-storage OAuth flow
 import { BaseSandboxService } from '../../services/sandbox/BaseSandboxService';
 import { WebSocketMessageData, WebSocketMessageType } from '../../api/websocketTypes';
-import { InferenceContext, ModelConfig } from '../inferutils/config.types';
+import { InferenceContext } from '../inferutils/config.types';
 import { ModelConfigService } from '../../database/services/ModelConfigService';
 import { fixProjectIssues } from '../../services/code-fixer';
 import { GitVersionControl } from '../git';
@@ -355,22 +355,14 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Load the latest user configs
         const modelConfigService = new ModelConfigService(this.env);
         const userConfigsRecord = await modelConfigService.getUserModelConfigs(this.state.inferenceContext.userId);
-        
-        const userModelConfigs: Record<string, ModelConfig> = {};
-        for (const [actionKey, mergedConfig] of Object.entries(userConfigsRecord)) {
-            if (mergedConfig.isUserOverride) {
-                const { isUserOverride, userConfigId, ...modelConfig } = mergedConfig;
-                userModelConfigs[actionKey] = modelConfig;
-            }
-        }
         this.setState({
             ...this.state,
             inferenceContext: {
                 ...this.state.inferenceContext,
-                userModelConfigs,
+                userModelConfigs: userConfigsRecord,
             },
         });
-        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userModelConfigs});
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userConfigsRecord});
     }
 
     private async gitInit() {
@@ -1702,6 +1694,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
 
         const regenerated = await this.regenerateFile({ filePath: path, fileContents, filePurpose }, issues, 0);
+        // Invalidate cache
+        this.staticAnalysisCache = null;
         // Persist to sandbox instance
         await this.getSandboxServiceClient().writeFiles(sandboxInstanceId, [{ filePath: regenerated.filePath, fileContents: regenerated.fileContents }], `Deep debugger fix: ${path}`);
         return { path, diff: regenerated.lastDiff };
@@ -1765,6 +1759,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('Files generated and saved', {
             fileCount: result.files.length
         });
+
+        await this.deployToSandbox(savedFiles, false);
 
         return { files: savedFiles.map(f => {
             return {
