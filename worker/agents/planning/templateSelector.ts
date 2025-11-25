@@ -35,7 +35,7 @@ export async function selectTemplate({ env, query, availableTemplates, inference
             templateCount: availableTemplates.length 
         });
 
-        availableTemplates = availableTemplates.filter(t => t.projectType !== 'presentation');
+        availableTemplates = availableTemplates.filter(t => t.projectType !== 'presentation' && !t.disabled && !t.name.includes('minimal'));
         const validTemplateNames = availableTemplates.map(t => t.name);
 
         const templateDescriptions = availableTemplates.map((t, index) =>
@@ -127,6 +127,11 @@ ENTROPY SEED: ${generateSecureToken(64)} - for unique results`;
             context: inferenceContext,
             maxTokens: 2000,
         });
+
+        if (!selection) {
+            logger.error('Template selection returned no result after all retries');
+            throw new Error('Failed to select template: inference returned null');
+        }
 
         logger.info(`AI template selection result: ${selection.selectedTemplateName || 'None'}, Reasoning: ${selection.reasoning}`);
         return selection;

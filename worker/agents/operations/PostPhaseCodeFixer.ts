@@ -97,6 +97,11 @@ export class FastCodeFixerOperation extends AgentOperation<FastCodeFixerInputs, 
             context: options.inferenceContext,
         });
 
+        if (!result || !result.string) {
+            logger.error('Fast code fixer returned no result after all retries');
+            throw new Error('Failed to fix code issues: inference returned null');
+        }
+
         const files = codeGenerationFormat.deserialize(result.string);
         return files;
     }

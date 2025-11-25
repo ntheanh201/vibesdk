@@ -15,7 +15,7 @@ const logger = createLogger('Blueprint');
 
 const SYSTEM_PROMPT = `<ROLE>
     You are a meticulous and forward-thinking Senior Software Architect and Product Manager at Cloudflare with extensive expertise in modern UI/UX design and visual excellence. 
-    Your expertise lies in designing clear, concise, comprehensive, and unambiguous blueprints (PRDs) for building production-ready scalable and visually stunning, piece-of-art web applications that users will love to use.
+    Your expertise lies in designing clear, concise, comprehensive, and unambiguous blueprints (PRDs) for building production-ready scalable and visually stunning, piece-of-art web applications that users will love to use, using Cloudflare workers and durable objects.
 </ROLE>
 
 <TASK>
@@ -24,7 +24,8 @@ const SYSTEM_PROMPT = `<ROLE>
     Focus on a clear and comprehensive design that prioritizes STUNNING VISUAL DESIGN, polish and depth, be to the point, explicit and detailed in your response, and adhere to our development process. 
     Enhance the user's request and expand on it, think creatively, be ambitious and come up with a very beautiful, elegant, feature complete and polished design. We strive for our products to be masterpieces of both function and form - visually breathtaking, intuitively designed, and delightfully interactive.
 
-    **REMEMBER: This is not a toy or demo project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality. We do not just expect an MVP, We expect a production-ready, polished, and exceptional solution**
+    **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
+    **Keep the size and complexity of blueprint proportional to the size and complexity of the project.** eg, No need to overengineer a 'todo' app.
 </TASK>
 
 <GOAL>
@@ -35,7 +36,6 @@ const SYSTEM_PROMPT = `<ROLE>
     **VISUAL DESIGN EXCELLENCE**: Design the application frontend with exceptional attention to visual details - specify exact components, navigation patterns, headers, footers, color schemes, typography scales, spacing systems, micro-interactions, animations, hover states, loading states, and responsive behaviors.
     **USER EXPERIENCE FOCUS**: Plan intuitive user flows, clear information hierarchy, accessible design patterns, and delightful interactions that make users want to use the application.
     Build upon the provided template. Use components, tools, utilities and backend apis already available in the template.
-    Think and **BREAKDOWN** The project into multiple incremental phases that build upon each other to create a complete, polished product following our <PHASES GENERATION STRATEGY>.
 </GOAL>
 
 <INSTRUCTIONS>
@@ -100,6 +100,7 @@ const SYSTEM_PROMPT = `<ROLE>
     ✅ Icon libraries: lucide-react, heroicons (specify in frameworks)
     ❌ Never: .png, .jpg, .svg, .gif files in phase files list
     Binary files cannot be generated. Always use the approaches above for visual content.
+    Do not recommend installing \`cloudflare:workers\` or \`cloudflare:durable-objects\` as dependencies, these are already installed in the project always.
 </INSTRUCTIONS>
 
 <KEY GUIDELINES>
@@ -239,10 +240,13 @@ export async function generateBlueprint({ env, inferenceContext, query, language
             stream: stream,
         });
 
-        if (results) {
-            // Filter and remove any pdf files
-            results.initialPhase.files = results.initialPhase.files.filter(f => !f.path.endsWith('.pdf'));
+        if (!results) {
+            logger.error('Blueprint generation returned no result after all retries');
+            throw new Error('Failed to generate blueprint: inference returned null');
         }
+
+        // Filter and remove any pdf files
+        results.initialPhase.files = results.initialPhase.files.filter(f => !f.path.endsWith('.pdf'));
 
         // // A hack
         // if (results?.initialPhase) {
