@@ -430,11 +430,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
                 }
             }
             
-            if (!result || !result.string) {
-                logger.error('User message processing returned no result');
-                throw new Error('Failed to process user message: inference returned null');
-            }
-            
             logger.info("Successfully processed user message", {
                 streamingSuccess: !!extractedUserResponse,
             });

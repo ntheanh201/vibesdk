@@ -532,11 +532,6 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
                 context: options.inferenceContext,
             });
 
-            if (!results || !results.string) {
-                logger.error('Failed to generate README.md content');
-                throw new Error('Failed to generate README.md content');
-            }
-
             logger.info('Generated README.md content successfully');
 
             return {

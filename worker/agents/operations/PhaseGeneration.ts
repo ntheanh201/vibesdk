@@ -285,7 +285,7 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
                 userMessage
             ];
     
-            const { object: results } = await executeInference({
+            const results = await executeInference({
                 env: env,
                 messages,
                 agentActionName: "phaseGeneration",
@@ -295,14 +295,22 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
                 format: 'markdown',
             });
     
-            if (!results) {
+            if (!results || !results.object) {
                 logger.error('Phase generation returned no result after all retries');
-                throw new Error('Failed to generate next phase: inference returned null');
+                return {
+                    name: '',
+                    description: '',
+                    files: [],
+                    lastPhase: true,
+                    installCommands: [],
+                };
             }
+
+            const concept = results.object;
     
-            logger.info(`Generated next phase: ${results.name}, ${results.description}`);
+            logger.info(`Generated next phase: ${concept.name}, ${concept.description}`);
     
-            return results;
+            return concept;
         } catch (error) {
             logger.error("Error generating next phase:", error);
             throw error;
