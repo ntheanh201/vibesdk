@@ -366,7 +366,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             inferenceContext: {
                 ...this.state.inferenceContext,
-                userModelConfigs,
+                userModelConfigs: userConfigsRecord,
             },
         });
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userConfigsRecord});
