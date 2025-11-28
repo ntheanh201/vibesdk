@@ -1507,7 +1507,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         const match = issue.reason.match(/External package ["'](.+?)["']/);
                         const name = match?.[1];
                         return (typeof name === 'string' && name.trim().length > 0 && !name.startsWith('@shared')) ? [name] : [];
-                    });
+                    }).filter((name) => !name.includes('cloudflare:'));
                     if (moduleNames.length > 0) {
                         const installCommands = moduleNames.map(moduleName => `bun install ${moduleName}`);
                         await this.executeCommands(installCommands, false);
