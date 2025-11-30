@@ -663,6 +663,11 @@ Provide the summary now:`
                 context: options.inferenceContext,
             });
 
+            if (!summaryResult || !summaryResult.string) {
+                logger.error('Conversation summarization returned no result');
+                throw new Error('Failed to generate conversation summary: inference returned null');
+            }
+
             const summary = summaryResult.string.trim();
             
             logger.info('Generated conversation summary', {

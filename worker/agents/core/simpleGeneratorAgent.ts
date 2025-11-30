@@ -355,7 +355,6 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         // Load the latest user configs
         const modelConfigService = new ModelConfigService(this.env);
         const userConfigsRecord = await modelConfigService.getUserModelConfigs(this.state.inferenceContext.userId);
-        
         const userModelConfigs: Record<string, ModelConfig> = {};
         for (const [actionKey, mergedConfig] of Object.entries(userConfigsRecord)) {
             if (mergedConfig.isUserOverride) {
@@ -367,10 +366,10 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             ...this.state,
             inferenceContext: {
                 ...this.state.inferenceContext,
-                userModelConfigs,
+                userModelConfigs: userConfigsRecord,
             },
         });
-        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userModelConfigs});
+        this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userConfigsRecord});
     }
 
     private async gitInit() {
@@ -1508,7 +1507,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         const match = issue.reason.match(/External package ["'](.+?)["']/);
                         const name = match?.[1];
                         return (typeof name === 'string' && name.trim().length > 0 && !name.startsWith('@shared')) ? [name] : [];
-                    });
+                    }).filter((name) => !name.includes('cloudflare:'));
                     if (moduleNames.length > 0) {
                         const installCommands = moduleNames.map(moduleName => `bun install ${moduleName}`);
                         await this.executeCommands(installCommands, false);
@@ -1702,6 +1701,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
 
         const regenerated = await this.regenerateFile({ filePath: path, fileContents, filePurpose }, issues, 0);
+        // Invalidate cache
+        this.staticAnalysisCache = null;
         // Persist to sandbox instance
         await this.getSandboxServiceClient().writeFiles(sandboxInstanceId, [{ filePath: regenerated.filePath, fileContents: regenerated.fileContents }], `Deep debugger fix: ${path}`);
         return { path, diff: regenerated.lastDiff };
@@ -1765,6 +1766,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.logger().info('Files generated and saved', {
             fileCount: result.files.length
         });
+
+        await this.deployToSandbox(savedFiles, false);
 
         return { files: savedFiles.map(f => {
             return {

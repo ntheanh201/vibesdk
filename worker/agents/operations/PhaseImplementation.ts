@@ -405,7 +405,7 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
         // Notify phase start
         const codeGenerationFormat = new SCOFFormat();
         // Build messages for generation
-        const messages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF);
+        const messages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF, false);
         
         // Create user message with optional images
         const userPrompt = userPromptFormatter(phase, issues, userContext?.suggestions) + codeGenerationFormat.formatInstructions();
@@ -531,11 +531,6 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
                 agentActionName: "projectSetup",
                 context: options.inferenceContext,
             });
-
-            if (!results || !results.string) {
-                logger.error('Failed to generate README.md content');
-                throw new Error('Failed to generate README.md content');
-            }
 
             logger.info('Generated README.md content successfully');
 
