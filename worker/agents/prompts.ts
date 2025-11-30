@@ -1126,15 +1126,7 @@ PROJECT_CONTEXT: `Here is everything you will need about the project:
 
 <PROJECT_CONTEXT>
 
-<COMPLETED_PHASES>
-
-The following phases have been completed and implemented:
-
-{{redactionNotice}}
-
-{{phases}}
-
-</COMPLETED_PHASES>
+{{phasesText}}
 
 <CODEBASE>
 
@@ -1387,10 +1379,21 @@ ${staticAnalysisText}
 - **FOCUS** on deployment-blocking runtime errors over linting issues`
 }
 
+const COMPLETED_PHASES_CONTEXT = `
+<COMPLETED_PHASES>
+
+The following phases have been completed and implemented:
+
+{{redactionNotice}}
+
+{{phases}}
+
+</COMPLETED_PHASES>`
 
 export const USER_PROMPT_FORMATTER = {
     PROJECT_CONTEXT: (phases: PhaseConceptType[], files: FileState[], fileTree: FileTreeNode, commandsHistory: string[], serializerType: CodeSerializerType = CodeSerializerType.SIMPLE, recentPhasesCount: number = 1) => {
         let lastPhaseFilesDiff = '';
+        let phasesText = '';
         try {
             if (phases.length > 1) {
                 const lastPhase = phases[phases.length - 1];
@@ -1408,37 +1411,35 @@ export const USER_PROMPT_FORMATTER = {
                         }
                     });
                 }
+
+                // Split phases into older (redacted) and recent (full) groups
+                const olderPhases = phases.slice(0, -recentPhasesCount);
+                const recentPhases = phases.slice(-recentPhasesCount);
+                
+                // Serialize older phases without files, recent phases with files
+                if (olderPhases.length > 0) {
+                    const olderPhasesLite = olderPhases.map(({ name, description }) => ({ name, description }));
+                    phasesText += TemplateRegistry.markdown.serialize({ phases: olderPhasesLite }, z.object({ phases: z.array(PhaseConceptLiteSchema) }));
+                    if (recentPhases.length > 0) {
+                        phasesText += '\n\n';
+                    }
+                }
+                if (recentPhases.length > 0) {
+                    phasesText += TemplateRegistry.markdown.serialize({ phases: recentPhases }, z.object({ phases: z.array(PhaseConceptSchema) }));
+                }
+                
+                const redactionNotice = olderPhases.length > 0 
+                    ? `**Note:** File details for the first ${olderPhases.length} phase(s) have been redacted to optimize context. Only the last ${recentPhasesCount} phase(s) include complete file information.\n` 
+                    : '';
+
+                phasesText = COMPLETED_PHASES_CONTEXT.replaceAll('{{phases}}', phasesText).replaceAll('{{redactionNotice}}', redactionNotice);
             }
         } catch (error) {
             console.error('Error processing project context:', error);
         }
 
-        // TODO: Instead of just including diff for last phase, include last diff for each file along with information of which phase it was modified in
-
-        // Split phases into older (redacted) and recent (full) groups
-        const olderPhases = phases.slice(0, -recentPhasesCount);
-        const recentPhases = phases.slice(-recentPhasesCount);
-        
-        // Serialize older phases without files, recent phases with files
-        let phasesText = '';
-        if (olderPhases.length > 0) {
-            const olderPhasesLite = olderPhases.map(({ name, description }) => ({ name, description }));
-            phasesText += TemplateRegistry.markdown.serialize({ phases: olderPhasesLite }, z.object({ phases: z.array(PhaseConceptLiteSchema) }));
-            if (recentPhases.length > 0) {
-                phasesText += '\n\n';
-            }
-        }
-        if (recentPhases.length > 0) {
-            phasesText += TemplateRegistry.markdown.serialize({ phases: recentPhases }, z.object({ phases: z.array(PhaseConceptSchema) }));
-        }
-        
-        const redactionNotice = olderPhases.length > 0 
-            ? `**Note:** File details for the first ${olderPhases.length} phase(s) have been redacted to optimize context. Only the last ${recentPhasesCount} phase(s) include complete file information.\n` 
-            : '';
-
         const variables: Record<string, string> = {
-            phases: phasesText,
-            redactionNotice: redactionNotice,
+            phasesText: phasesText,
             files: PROMPT_UTILS.serializeFiles(files, serializerType),
             fileTree: PROMPT_UTILS.serializeTreeNodes(fileTree),
             lastDiffs: lastPhaseFilesDiff,

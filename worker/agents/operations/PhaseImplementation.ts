@@ -405,7 +405,7 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
         // Notify phase start
         const codeGenerationFormat = new SCOFFormat();
         // Build messages for generation
-        const messages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF);
+        const messages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF, false);
         
         // Create user message with optional images
         const userPrompt = userPromptFormatter(phase, issues, userContext?.suggestions) + codeGenerationFormat.formatInstructions();
