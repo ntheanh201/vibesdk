@@ -279,7 +279,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         await this.fileManager.saveGeneratedFiles(
             filesToSave,
-            'Initialize project configuration files'
+            'Initialize project configuration files',
+            true
         );
         
         this.logger().info('Committed customized template files to git');
@@ -342,7 +343,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     fileContents: packageJson,
                     filePurpose: 'Project configuration file'
                 }
-            ], 'chore: fix overwritten package.json');
+            ], 'chore: fix overwritten package.json', true);
         }
         
         // Full initialization for read-write operations
@@ -477,7 +478,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 fileContents: bootstrapScript,
                 filePurpose: 'Updated bootstrap script for first-time clone setup'
             },
-            'chore: Update bootstrap script with latest commands'
+            'chore: Update bootstrap script with latest commands',
+            true
         );
         
         this.logger().info('Updated bootstrap script with commands', {
@@ -775,7 +777,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         const readme = await this.operations.implementPhase.generateReadme(this.getOperationOptions());
 
-        await this.fileManager.saveGeneratedFile(readme, "feat: README.md");
+        await this.fileManager.saveGeneratedFile(readme, "feat: README.md", true);
 
         this.broadcast(WebSocketMessageResponses.FILE_GENERATED, {
             message: 'README.md generated successfully',
@@ -2202,7 +2204,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     fileContents: packageJson,
                     filePurpose: 'Project dependencies and configuration'
                 },
-                'chore: sync package.json dependencies from sandbox'
+                'chore: sync package.json dependencies from sandbox',
+                true
             );
             
             this.logger().info('Successfully synced package.json to git', { 
