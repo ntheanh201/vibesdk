@@ -1684,6 +1684,13 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         if (!sandboxInstanceId) {
             throw new Error('No sandbox instance available');
         }
+        const templateDetails = this.getTemplateDetails();
+        if (templateDetails && templateDetails.dontTouchFiles && templateDetails.dontTouchFiles.includes(path)) {
+            return {
+                path,
+                diff: '<WRITE PROTECTED - TEMPLATE FILE, CANNOT MODIFY - SKIPPED - NO CHANGES MADE>'
+            };
+        }
         // Prefer local file manager; fallback to sandbox
         let fileContents = '';
         let filePurpose = '';
@@ -1728,6 +1735,22 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             phaseName
         });
 
+        let skippedFiles: { path: string; purpose: string; diff: string }[] = [];
+
+        // Enforce template donttouch constraints
+        const templateDetails = this.getTemplateDetails();
+        if (templateDetails && templateDetails.dontTouchFiles) {
+            const dontTouchFiles = new Set<string>(templateDetails.dontTouchFiles);
+            files = files.filter(file => {
+                if (dontTouchFiles.has(file.path)) {
+                    this.logger().info('Skipping dont-touch file', { filePath: file.path });
+                    skippedFiles.push({ path: file.path, purpose: `WRITE-PROTECTED FILE, CANNOT MODIFY`, diff: "<WRITE PROTECTED - TEMPLATE FILE, CANNOT MODIFY - SKIPPED - NO CHANGES MADE>" });
+                    return false;
+                }
+                return true;
+            });
+        }
+
         const operation = new SimpleCodeGenerationOperation();
         const result = await operation.execute(
             {
@@ -1771,13 +1794,18 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
         await this.deployToSandbox(savedFiles, false);
 
-        return { files: savedFiles.map(f => {
-            return {
-                path: f.filePath,
-                purpose: f.filePurpose || '',
-                diff: f.lastDiff || ''
-            };
-        }) };
+        return { 
+            files: [
+                ...skippedFiles,
+                ...savedFiles.map(f => {
+                    return {
+                        path: f.filePath,
+                        purpose: f.filePurpose || '',
+                        diff: f.lastDiff || ''
+                    };
+                }) 
+            ]
+        };
     }
 
     async deployToSandbox(files: FileOutputType[] = [], redeploy: boolean = false, commitMessage?: string, clearLogs: boolean = false): Promise<PreviewType | null> {
